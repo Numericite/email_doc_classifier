@@ -1,0 +1,4 @@
+.env
+.venv/
+data/inbox_temp/
+__pycache__/
