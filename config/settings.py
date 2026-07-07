@@ -24,8 +24,15 @@ class Settings:
     logs_dir = Path("logs")
 
     # Modèles Ollama
-    vision_model = "qwen2.5vl:3b"
- 
+    #vision_model = "qwen2.5vl:3b" #pour analyse des images
+    #vision_model = "moondream" #analyse image leger mais trop faible 
+    vision_model = "granite3.2-vision:2b" #
+    classification_model = "llama3.2:3b" #analyse texte ( faible au nombresue données)
+    #extraction_model = "qwen3:4b" #plus rapide mais moins fiable sur les cas nuances
+    extraction_model = "qwen2.5:7b" #extraction structuree (type, client, projet)
+  
+    #Analyse des document
+    min_text_chars = 50
 
 
 settings = Settings()
