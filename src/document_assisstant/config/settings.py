@@ -30,7 +30,11 @@ class Settings:
     classification_model = "llama3.2:3b" #analyse texte ( faible au nombresue données)
     #extraction_model = "qwen3:4b" #plus rapide mais moins fiable sur les cas nuances
     extraction_model = "qwen2.5:7b" #extraction structuree (type, client, projet)
-  
+    
+
+    #notion
+    notion_token = os.getenv("NOTION_TOKEN")
+    notion_database_id = os.getenv("NOTION_DATABASE_ID")
     #Analyse des document
     min_text_chars = 50
 

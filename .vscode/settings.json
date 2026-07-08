@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/src/document_assisstant/.venv/Scripts/python.exe",
+  "python.analysis.extraPaths": ["src/document_assisstant"],
+  "python.envFile": "${workspaceFolder}/.env",
+  "terminal.integrated.env.windows": {
+    "PYTHONPATH": "src/document_assisstant"
+  }
+}
