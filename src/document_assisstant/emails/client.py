@@ -40,6 +40,7 @@ class EmailClient:
         if attachments:
             saved_files = extractor.extract(item)      # ajout : sauvegarde disque
             emails.append({
+                "message_id": item.message_id,   # ajout : identifiant unique (anti-doublon base)
                 "date": serialize(item.datetime_received),
                 "sujet": item.subject,
                 "sender": item.sender.email_address,

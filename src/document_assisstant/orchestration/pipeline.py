@@ -8,6 +8,11 @@ from emails.client import EmailClient
 from notion.imports_projet import get_projets_actifs
 from extraction.data_preparation import DataPreparation
 from classification.classifier import Classifier
+from databases.repository import (
+    init_db,
+    mail_deja_traite,
+    enregistrer_mail_et_documents,
+)
 
 # Formats que l'extraction sait traiter (Docling).
 EXTENSIONS = {".pdf", ".docx"}
@@ -34,6 +39,9 @@ def _etape(numero, titre, donnee, resume):
 # Aucune logique métier ici — tout le travail est délégué aux modules dédiés.
 def executer_pipeline(hours=30):
 
+    # Base de données prête (crée les tables au premier lancement).
+    init_db()
+
     # --- Étape 1 : surveillance de la boîte mail (emails/) ---
     emails = EmailClient().filter(hours=hours)
     _etape(
@@ -58,8 +66,16 @@ def executer_pipeline(hours=30):
     prep = DataPreparation()
     classifier = Classifier()
 
-    resultats = []
+    resultats = []          # copie de debug (JSON) — la base reste la source de vérité
+    nb_docs = 0
     for email in emails:
+        # Anti-doublon : un mail déjà en base n'est pas ré-analysé (économie de tokens).
+        if mail_deja_traite(email.get("message_id")):
+            print(f"\n{'#'*70}\nMail déjà traité, ignoré : « {email['sujet']} »")
+            continue
+
+        # On regroupe les analyses des documents de CE mail (relation un-à-plusieurs).
+        analyses = []
         for chemin in email["fichiers_sauvegardes"]:
             fichier = Path(chemin)
             print(f"\n{'#'*70}\nDocument : {fichier.name}  (mail : « {email['sujet']} »)")
@@ -79,30 +95,31 @@ def executer_pipeline(hours=30):
                       f"projet={infos['projet']['projet_name'] if infos['projet'] else '(aucun)'}, "
                       f"score={infos['score_confiance']}")
 
-                resultats.append({
-                    "document": fichier.name,
-                    "chemin": chemin,
-                    "email": {
-                        "sujet": email["sujet"],
-                        "sender": email["sender"],
-                        "date": email["date"],
-                    },
+                analyses.append({
+                    "nom_fichier": fichier.name,
+                    "chemin_local": chemin,
                     "texte_extrait": texte,
                     "type_document": infos["type_document"],
-                    "projet_id": infos["projet_id"],
-                    "projet": infos["projet"],
+                    "projet": infos["projet"],       # dict complet (nom, client, nextcloud)
                     "score_confiance": infos["score_confiance"],
-                    "statut": "en_attente",  # en_attente | valide | refuse
                 })
             except Exception as e:
                 # L'orchestrateur décide : on saute ce document et on continue.
                 print(f"  [ERREUR] {type(e).__name__}: {e} — document ignoré.")
 
-    # --- Résultat final : la liste des propositions, pour l'UI ---
+        # Enregistrement en base : le mail + tous ses documents analysés.
+        if analyses:
+            enregistrer_mail_et_documents(email, analyses)
+            nb_docs += len(analyses)
+            print(f"  → mail + {len(analyses)} document(s) enregistrés en base.")
+            resultats.append({"email": email["sujet"], "documents": analyses})
+
+    # --- Copie de debug (JSON), pratique pour inspecter le dernier lot ---
     RESULTATS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTATS_PATH, "w", encoding="utf-8") as f:
         json.dump(resultats, f, indent=2, ensure_ascii=False)
-    print(f"\n{'='*70}\n{len(resultats)} proposition(s) sauvegardée(s) dans {RESULTATS_PATH}")
+    print(f"\n{'='*70}\n{nb_docs} document(s) enregistré(s) en base (data/app.db). "
+          f"Copie debug : {RESULTATS_PATH}")
     return resultats
 
 
