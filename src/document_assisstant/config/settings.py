@@ -27,7 +27,7 @@ class Settings:
     # SQLite en local aujourd'hui.
     #  pour passer à PostgreSQL plus tard, il suffit de définir DATABASE_URL (ex: postgresql+psycopg://user:pwd@host/db) — aucun autre
 
-    database_url = os.getenv("DATABASE_URL", "sqlite:///data/app.db")
+    database_url = os.getenv("DATABASE_URL")
 
     # Modèles Ollama
     #vision_model = "qwen2.5vl:3b" #pour analyse des images
