@@ -1,6 +1,7 @@
 .env
 .venv/
-data/inbox_temp/
+docs
+datainbox_temp/
 __pycache__/
 architecture.txt
 .claude/
