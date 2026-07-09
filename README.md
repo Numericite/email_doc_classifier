@@ -29,23 +29,6 @@ Le cœur de l'application. Il enchaîne 4 étapes et **injecte le résultat dans
 - Un mail **déjà analysé** est ignoré (anti-doublon sur son `message_id`) → aucun token
   n'est dépensé deux fois.
 - Le texte envoyé à Claude est **plafonné** (5 pages, 20 000 caractères).
-
-**Gestion des erreurs :** un document qui échoue (extraction ou API) est **sauté**, le
-lot continue.
-
-### Voir ce qui circule entre les étapes
-
-À chaque étape, le pipeline affiche un résumé **et** écrit le détail sur disque :
-
-| Fichier | Contenu |
-|---|---|
-| `data/etapes/1_emails.json` | les mails et leurs pièces jointes |
-| `data/etapes/2_projets_notion.json` | les projets envoyés au LLM |
-| `data/resultats_analyse.json` | les résultats de classification (inspection) |
-
-> Ces fichiers servent **uniquement à inspecter**. La **source de vérité est PostgreSQL** :
-> rien n'est relu depuis ces fichiers.
-
 ---
 
 ## Lancer le pipeline
@@ -76,7 +59,7 @@ Les tables sont créées automatiquement au premier lancement (`init_db()`).
 
 ### 2. Lancer le pipeline
 
-⚠️ **Toujours depuis la racine du projet**, avec `PYTHONPATH` : les chemins (`data/`) sont
+ **Toujours depuis la racine du projet**, avec `PYTHONPATH` : les chemins (`data/`) sont
 relatifs à la racine, et les modules vivent dans `src\document_assisstant`.
 
 ```powershell
@@ -113,23 +96,8 @@ DATABASE_URL=postgresql://postgres:<mot_de_passe>@localhost:5432/classifier
 Aucun secret n'est écrit dans le code : tout passe par `config/settings.py`.
 
 > ℹ️ Les dépendances (Docling, anthropic, psycopg, PySide6, exchangelib…) sont installées
-> dans le venv du projet. **Un `requirements.txt` reste à créer** pour rendre
-> l'installation reproductible.
+> dans le venv du projet.
 
----
-
-## Inspecter la base
-
-```powershell
-docker exec -it pg-classifier psql -U postgres -d classifier
-```
-
-Dans `psql` : `\dt` (lister les tables) · `\x` (affichage vertical) · `\q` (quitter).
-
-```sql
-SELECT m.objet, d.nom_fichier, d.type_document, d.statut
-FROM documents d JOIN mails m ON m.id = d.mail_id;
-```
 
 ---
 
@@ -150,19 +118,4 @@ Chaque dossier a **une seule responsabilité**.
 | `utils/` | Fonctions transverses |
 | `vision/` | *En attente* (hors périmètre V1) |
 
----
-
-## Où on en est
-
-**Fonctionne** : mails → extraction → projets Notion → analyse Claude → PostgreSQL →
-interface (aperçu, téléchargement, statuts).
-
-**Reste à faire :**
-- Le **dépôt réel dans Nextcloud** (le bouton *Classé* ne fait que changer le statut).
-- Le **nettoyage** des fichiers locaux après dépôt.
-- Deux pièces jointes de même nom, dans deux mails différents, **s'écrasent** dans
-  `data/inbox_temp/` (correction prévue : un sous-dossier par mail).
-- Extraire davantage de champs (client, contact, date, résumé).
-- Créer un `requirements.txt`.
-
-Détail complet dans [`docs/tasks.md`](docs/tasks.md).
+-
