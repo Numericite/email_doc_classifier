@@ -123,3 +123,6 @@ def changer_statut(document_id, statut, sous_dossier=None, chemin_nextcloud=None
         doc.date_decision = maintenant()
         s.commit()
         return True
+
+
+
