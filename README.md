@@ -4,11 +4,6 @@ Application locale qui surveille une boîte mail, analyse les documents reçus e
 jointe, et **propose** un classement dans Nextcloud. **Rien n'est classé automatiquement** :
 chaque proposition est validée par un humain.
 
-📄 Voir aussi : [`docs/product.md`](docs/product.md) (le produit) ·
-[`docs/architecture.md`](docs/architecture.md) (la technique) ·
-[`docs/tasks.md`](docs/tasks.md) (l'avancement).
-
----
 
 ## Le pipeline
 
