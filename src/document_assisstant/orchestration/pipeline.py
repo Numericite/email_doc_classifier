@@ -19,6 +19,8 @@ EXTENSIONS = {".pdf", ".docx"}
 
 # Dossier où l'on écrit ce qui circule entre les étapes, pour pouvoir l'inspecter.
 ETAPES_DIR = Path("data/etapes")
+# Copie lisible des résultats de classification (inspection uniquement) —
+# la source de vérité reste la base PostgreSQL.
 RESULTATS_PATH = Path("data/resultats_analyse.json")
 
 
@@ -37,7 +39,7 @@ def _etape(numero, titre, donnee, resume):
 
 # Chef d'orchestre : enchaîne les étapes dans le bon ordre et fait circuler les données.
 # Aucune logique métier ici — tout le travail est délégué aux modules dédiés.
-def executer_pipeline(hours=30):
+def executer_pipeline(hours=72):
 
     # Base de données prête (crée les tables au premier lancement).
     init_db()
@@ -114,12 +116,12 @@ def executer_pipeline(hours=30):
             print(f"  → mail + {len(analyses)} document(s) enregistrés en base.")
             resultats.append({"email": email["sujet"], "documents": analyses})
 
-    # --- Copie de debug (JSON), pratique pour inspecter le dernier lot ---
+    # --- Copie lisible des résultats de classification (inspection uniquement) ---
     RESULTATS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(RESULTATS_PATH, "w", encoding="utf-8") as f:
         json.dump(resultats, f, indent=2, ensure_ascii=False)
-    print(f"\n{'='*70}\n{nb_docs} document(s) enregistré(s) en base (data/app.db). "
-          f"Copie debug : {RESULTATS_PATH}")
+    print(f"\n{'='*70}\n{nb_docs} document(s) enregistré(s) dans PostgreSQL. "
+          f"Résultats de classification : {RESULTATS_PATH}")
     return resultats
 
 
