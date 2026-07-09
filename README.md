@@ -114,7 +114,7 @@ Chaque dossier a **une seule responsabilité**.
 | `classification/` | Construction du prompt + appel à **Claude** |
 | `databases/` | Schéma SQL et accès aux données (**psycopg**, sans ORM) |
 | `orchestration/` | Le **pipeline** — enchaîne les étapes, aucune logique métier |
-| `ui/` | Interface de bureau (**PySide6**) |
+| `ui/` | Interface de bureau |
 | `utils/` | Fonctions transverses |
 | `vision/` | *En attente* (hors périmètre V1) |
 
