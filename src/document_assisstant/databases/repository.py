@@ -1,21 +1,27 @@
-# Couche d'accès aux données (repository pattern).
+# Couche d'accès aux données (repository pattern), en SQL direct sur PostgreSQL.
 # TOUT le SQL vit ici. Le pipeline et l'UI n'utilisent que ces fonctions —
-# ils ne savent pas quelle base est derrière. Passer à PostgreSQL = changer
-# DATABASE_URL dans la config, rien d'autre.
+# ils ne savent pas quelle base est derrière ni comment elle est interrogée.
 
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker, selectinload
+import psycopg
+from psycopg.rows import dict_row
 
 from config.settings import settings
-from databases.models import Base, Mail, Document, maintenant
-
-engine = create_engine(settings.database_url)
-Session = sessionmaker(bind=engine)
+from databases.models import SCHEMA_SQL
 
 
-# Crée les tables si elles n'existent pas encore (idempotent).
+# Ouvre une connexion à PostgreSQL (chaîne de connexion lue dans .env via settings).
+# Utilisée avec `with` : la transaction est validée à la sortie, annulée si erreur,
+# et la connexion est fermée automatiquement.
+def _connexion():
+    return psycopg.connect(settings.database_url)
+
+
+# Crée les tables et les index s'ils n'existent pas encore (idempotent).
 def init_db():
-    Base.metadata.create_all(engine)
+    with _connexion() as conn, conn.cursor() as cur:
+        for instruction in SCHEMA_SQL:
+            cur.execute(instruction)
+        conn.commit()
 
 
 # True si ce mail a déjà été enregistré (à vérifier AVANT d'analyser, pour ne pas
@@ -23,106 +29,109 @@ def init_db():
 def mail_deja_traite(message_id):
     if not message_id:
         return False
-    with Session() as s:
-        return s.scalar(select(Mail.id).where(Mail.message_id == message_id)) is not None
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM mails WHERE message_id = %s", (message_id,))
+        return cur.fetchone() is not None
 
 
-# Sérialise un Document en dict simple pour l'UI (évite les objets SQLAlchemy détachés).
-def _document_dict(d):
-    return {
-        "id": d.id,
-        "nom_fichier": d.nom_fichier,
-        "chemin_local": d.chemin_local,
-        "texte_extrait": d.texte_extrait,
-        "type_document": d.type_document,
-        "projet_nom": d.projet_nom,
-        "projet_client": d.projet_client,
-        "projet_nextcloud": d.projet_nextcloud,
-        "score_confiance": d.score_confiance,
-        "statut": d.statut,
-        "sous_dossier": d.sous_dossier,
-        "chemin_nextcloud": d.chemin_nextcloud,
-    }
-
-
-# Enregistre un mail et ses documents analysés.
+# Enregistre un mail et ses documents analysés (une transaction : tout ou rien).
 # - email    : dict issu de emails/ (message_id, sujet, sender, nom_sender, date)
 # - analyses : liste de dicts {nom_fichier, chemin_local, texte_extrait,
 #              type_document, projet (dict|None), score_confiance}
 # Anti-doublon : si le message_id est déjà en base, on ignore (déjà traité).
-# Renvoie True si inséré, False si ignoré (déjà présent).
+# Renvoie True si inséré, False si ignoré.
 def enregistrer_mail_et_documents(email, analyses):
     message_id = email.get("message_id")
-    with Session() as s:
-        if message_id and s.scalar(select(Mail).where(Mail.message_id == message_id)):
-            return False  # mail déjà traité
+    with _connexion() as conn, conn.cursor() as cur:
+        if message_id:
+            cur.execute("SELECT 1 FROM mails WHERE message_id = %s", (message_id,))
+            if cur.fetchone():
+                return False  # mail déjà traité
 
-        mail = Mail(
-            message_id=message_id,
-            expediteur=email.get("sender"),
-            expediteur_nom=email.get("nom_sender"),
-            objet=email.get("sujet"),
-            date_mail=email.get("date"),
+        # RETURNING id : PostgreSQL nous rend l'identifiant du mail qu'il vient de créer.
+        cur.execute(
+            """
+            INSERT INTO mails (message_id, expediteur, expediteur_nom, objet, date_mail)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (message_id, email.get("sender"), email.get("nom_sender"),
+             email.get("sujet"), email.get("date")),
         )
+        mail_id = cur.fetchone()[0]
+
         for a in analyses:
             projet = a.get("projet") or {}
-            mail.documents.append(Document(
-                nom_fichier=a["nom_fichier"],
-                chemin_local=a.get("chemin_local"),
-                texte_extrait=a.get("texte_extrait"),
-                type_document=a.get("type_document"),
-                projet_nom=projet.get("projet_name"),
-                projet_client=projet.get("client"),
-                projet_nextcloud=projet.get("nextcloud"),
-                score_confiance=a.get("score_confiance"),
-            ))
-        s.add(mail)
-        s.commit()
+            cur.execute(
+                """
+                INSERT INTO documents (
+                    mail_id, nom_fichier, chemin_local, texte_extrait, type_document,
+                    projet_nom, projet_client, projet_nextcloud, score_confiance
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (mail_id, a["nom_fichier"], a.get("chemin_local"), a.get("texte_extrait"),
+                 a.get("type_document"), projet.get("projet_name"), projet.get("client"),
+                 projet.get("nextcloud"), a.get("score_confiance")),
+            )
+
+        conn.commit()
         return True
 
 
 # Liste les mails avec leurs documents (pour l'affichage), du plus récent au plus ancien.
 # Si `statut` est fourni, ne garde que les documents ayant ce statut.
 def lister_mails(statut=None):
-    with Session() as s:
-        mails = s.scalars(
-            select(Mail).options(selectinload(Mail.documents)).order_by(Mail.date_analyse.desc())
-        ).all()
+    # dict_row : chaque ligne revient sous forme de dictionnaire {colonne: valeur}.
+    with _connexion() as conn, conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            """
+            SELECT id, expediteur, expediteur_nom, objet, date_mail
+              FROM mails
+             ORDER BY date_analyse DESC
+            """
+        )
+        mails = cur.fetchall()
+        if not mails:
+            return []
 
-        resultat = []
-        for m in mails:
-            docs = m.documents
-            if statut:
-                docs = [d for d in docs if d.statut == statut]
-                if not docs:
-                    continue
-            resultat.append({
-                "id": m.id,
-                "expediteur": m.expediteur,
-                "expediteur_nom": m.expediteur_nom,
-                "objet": m.objet,
-                "date_mail": m.date_mail,
-                "documents": [_document_dict(d) for d in docs],
-            })
-        return resultat
+        if statut:
+            cur.execute("SELECT * FROM documents WHERE statut = %s ORDER BY id", (statut,))
+        else:
+            cur.execute("SELECT * FROM documents ORDER BY id")
+        documents = cur.fetchall()
+
+    # On regroupe les documents sous leur mail (relation un-à-plusieurs).
+    par_mail = {}
+    for d in documents:
+        par_mail.setdefault(d["mail_id"], []).append(d)
+
+    resultat = []
+    for m in mails:
+        docs = par_mail.get(m["id"], [])
+        if statut and not docs:
+            continue  # ce mail n'a aucun document du statut demandé
+        m["documents"] = docs
+        resultat.append(m)
+    return resultat
 
 
-# Change le statut d'un document (bouton Valider / Refuser de l'UI).
-# On peut renseigner le sous-dossier et le chemin Nextcloud lors d'un classement.
+# Change le statut d'un document (select de statut / bouton Classé de l'UI).
+# COALESCE(%s, colonne) : si on ne passe pas la valeur, on garde celle déjà en base.
 # Renvoie True si le document existe, False sinon.
 def changer_statut(document_id, statut, sous_dossier=None, chemin_nextcloud=None):
-    with Session() as s:
-        doc = s.get(Document, document_id)
-        if doc is None:
-            return False
-        doc.statut = statut
-        if sous_dossier is not None:
-            doc.sous_dossier = sous_dossier
-        if chemin_nextcloud is not None:
-            doc.chemin_nextcloud = chemin_nextcloud
-        doc.date_decision = maintenant()
-        s.commit()
-        return True
-
-
-
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE documents
+               SET statut           = %s,
+                   sous_dossier     = COALESCE(%s, sous_dossier),
+                   chemin_nextcloud = COALESCE(%s, chemin_nextcloud),
+                   date_decision    = NOW()
+             WHERE id = %s
+            """,
+            (statut, sous_dossier, chemin_nextcloud, document_id),
+        )
+        modifie = cur.rowcount > 0
+        conn.commit()
+        return modifie
