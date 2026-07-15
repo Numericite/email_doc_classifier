@@ -1,7 +1,7 @@
 .env
 .venv/
 docs/
-datainbox_temp/
+data/
 __pycache__/
 architecture.txt
 .claude/
