@@ -30,14 +30,14 @@ COULEURS_STATUT = {
 }
 
 
-# --- Palette / thème (inspiré de l'app interne) ---
+#  thème (pipé de l'app interne) 
 BLEU = "#2F6BFF"
 TEXTE = "#1B2559"
 MUET = "#8A94A6"
 BORDURE = "#E6E9F0"
 FOND = "#F5F6F8"
 
-# Feuille de style globale (QSS) — c'est ce qui donne le look moderne.
+# Feuille de style globale 
 STYLE = f"""
 QWidget {{ background: {FOND}; color: {TEXTE}; font-size: 14px; }}
 QScrollArea {{ border: none; }}
@@ -328,8 +328,7 @@ class FenetrePrincipale(QMainWindow):
         statut = combo.currentData()
         changer_statut(doc["id"], statut)
         self._appliquer_couleur_statut(combo, statut)
-        if statut == "classe":
-            self._message_classe()
+    
 
     # Bouton "Classé" : passe le statut à "classe" (et met le select à jour).
     def _classer(self, doc, combo):
@@ -338,13 +337,7 @@ class FenetrePrincipale(QMainWindow):
             combo.setCurrentIndex(idx)
         changer_statut(doc["id"], "classe")
         self._appliquer_couleur_statut(combo, "classe")
-        self._message_classe()
-
-    def _message_classe(self):
-        QMessageBox.information(
-            self, "Classé",
-            "Document marqué « Classé ».\n(Le dépôt automatique dans Nextcloud sera ajouté en §9.)"
-        )
+        
 
     # Formate la date de réception du mail (ISO -> "JJ/MM/AAAA HH:MM").
     def _format_date(self, iso):
