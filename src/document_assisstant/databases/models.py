@@ -36,6 +36,10 @@ SCHEMA_SQL = (
         projet_nextcloud TEXT,                       -- URL Nextcloud du projet
         score_confiance  DOUBLE PRECISION,
 
+        -- Dossiers Nextcloud candidats proposés par le LLM (v2), liste JSON :
+        -- [{"nom": ..., "chemin": ...}, ...] — vide si aucun (→ création).
+        dossiers_candidats JSONB,
+
         -- État / décision
         statut           VARCHAR(32) NOT NULL DEFAULT 'en_attente',
         sous_dossier     VARCHAR(64),                -- Facturation / Documents_Admin
@@ -43,6 +47,9 @@ SCHEMA_SQL = (
         date_decision    TIMESTAMPTZ
     );
     """,
+
+    # Ajout de la colonne sur une base déjà créée (idempotent).
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS dossiers_candidats JSONB;",
 
     # Index : accélèrent les requêtes de l'UI (documents d'un mail, filtre par statut).
     "CREATE INDEX IF NOT EXISTS idx_documents_mail_id ON documents(mail_id);",

@@ -4,6 +4,7 @@
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from config.settings import settings
 from databases.models import SCHEMA_SQL
@@ -66,13 +67,15 @@ def enregistrer_mail_et_documents(email, analyses):
                 """
                 INSERT INTO documents (
                     mail_id, nom_fichier, chemin_local, texte_extrait, type_document,
-                    projet_nom, projet_client, projet_nextcloud, score_confiance
+                    projet_nom, projet_client, projet_nextcloud, score_confiance,
+                    dossiers_candidats
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (mail_id, a["nom_fichier"], a.get("chemin_local"), a.get("texte_extrait"),
                  a.get("type_document"), projet.get("projet_name"), projet.get("client"),
-                 projet.get("nextcloud"), a.get("score_confiance")),
+                 projet.get("nextcloud"), a.get("score_confiance"),
+                 Jsonb(a.get("dossiers_candidats") or [])),
             )
 
         conn.commit()

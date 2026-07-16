@@ -10,7 +10,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QDesktopServices, QFont, QColor
 from PySide6.QtCore import QUrl, Qt
 
+from config.settings import settings
 from databases.repository import init_db, lister_mails, changer_statut
+from nextcloud.depot import deposer_document, creer_dossier, generer_nom_dossier
 
 
 # Les statuts, dans l'ordre du menu déroulant : (clé interne, libellé affiché).
@@ -252,7 +254,7 @@ class FenetrePrincipale(QMainWindow):
         col.addWidget(sep)
 
         for doc in mail["documents"]:
-            col.addWidget(self._carte_document(doc))
+            col.addWidget(self._carte_document(doc, mail.get("objet") or ""))
         return carte
 
     # Petit avatar rond avec l'initiale de l'expéditeur (aide à distinguer les mails).
@@ -264,34 +266,43 @@ class FenetrePrincipale(QMainWindow):
         a.setAlignment(Qt.AlignCenter)
         return a
 
-    # Une carte bordurée par document : nom, type, score, projet, statut (select), actions.
-    def _carte_document(self, doc):
+    # Une carte bordurée par document : nom, score, dossier (select), statut, actions.
+    def _carte_document(self, doc, objet_mail=""):
         carte = QFrame()
         carte.setObjectName("carteDoc")
         col = QVBoxLayout(carte)
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(10)
 
-        # Ligne 1 : nom du fichier + pastilles type et score.
+        # Ligne 1 : nom du fichier + pastille score.
         l1 = QHBoxLayout()
         nom = QLabel(doc["nom_fichier"])
         nom.setObjectName("nomFichier")
         l1.addWidget(nom)
-        l1.addWidget(_pastille_type(doc.get("type_document")))
         l1.addStretch()
         l1.addWidget(_pastille_score(doc.get("score_confiance")))
         col.addLayout(l1)
 
-        # Ligne 2 : le projet proposé, bien visible.
-        projet = QLabel(f"Projet proposé : {doc.get('projet_nom') or '(aucun)'}")
-        projet.setObjectName("projet")
-        projet.setWordWrap(True)
-        col.addWidget(projet)
+        # Ligne 2 : sélecteur du dossier Nextcloud de destination.
+        # - plusieurs candidats -> menu de choix ; un seul -> présélectionné ;
+        # - aucun -> une seule entrée « Créer : <nom généré> ».
+        l2 = QHBoxLayout()
+        l2.addWidget(QLabel("Dossier :"))
+        combo_dossier = QComboBox()
+        candidats = doc.get("dossiers_candidats") or []
+        if candidats:
+            for c in candidats:
+                combo_dossier.addItem(c["nom"], userData=c["chemin"])
+        else:
+            nom_genere = generer_nom_dossier(objet_mail, doc["nom_fichier"])
+            combo_dossier.addItem(f"➕ Créer : {nom_genere}",
+                                  userData=("__create__", nom_genere))
+        l2.addWidget(combo_dossier, stretch=1)
+        col.addLayout(l2)
 
-        # Ligne 3 : tout groupé à gauche — statut (select) + boutons + bouton Classé.
+        # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
         l3 = QHBoxLayout()
 
-        # 'activated' ne se déclenche que sur action de l'utilisateur (pas au montage).
         combo = QComboBox()
         for cle, libelle in STATUTS:
             combo.addItem(libelle, userData=cle)
@@ -307,7 +318,7 @@ class FenetrePrincipale(QMainWindow):
         b_tele.clicked.connect(lambda _=0, d=doc: self._telecharger(d))
         b_classe = QPushButton("✔ Classé")
         b_classe.setObjectName("primaire")
-        b_classe.clicked.connect(lambda _=0, d=doc, c=combo: self._classer(d, c))
+        b_classe.clicked.connect(lambda _=0, d=doc, c=combo_dossier: self._classer(d, c))
 
         l3.addStretch()
         l3.addWidget(combo)
@@ -330,13 +341,28 @@ class FenetrePrincipale(QMainWindow):
         self._appliquer_couleur_statut(combo, statut)
     
 
-    # Bouton "Classé" : passe le statut à "classe" (et met le select à jour).
-    def _classer(self, doc, combo):
-        idx = combo.findData("classe")
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-        changer_statut(doc["id"], "classe")
-        self._appliquer_couleur_statut(combo, "classe")
+    # Bouton "Classé" : dépose le document dans le dossier choisi (le crée si besoin),
+    # puis enregistre le classement en base (statut="classe" + chemin distant).
+    def _classer(self, doc, combo_dossier):
+        chemin_local = doc.get("chemin_local")
+        if not chemin_local or not Path(chemin_local).exists():
+            QMessageBox.warning(self, "Classé", "Fichier introuvable sur le disque.")
+            return
+
+        data = combo_dossier.currentData()
+        try:
+            # Cas "aucun candidat" : on crée le dossier au même endroit que les autres.
+            if isinstance(data, tuple) and data and data[0] == "__create__":
+                dossier = creer_dossier(settings.base_remote_path, data[1])
+            else:
+                dossier = data  # chemin du dossier candidat choisi
+
+            chemin_distant = deposer_document(chemin_local, dossier)
+            changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
+            QMessageBox.information(self, "Classé", f"Document déposé dans :\n{dossier}")
+            self.rafraichir()
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur de dépôt", f"{type(e).__name__}: {e}")
         
 
     # Formate la date de réception du mail (ISO -> "JJ/MM/AAAA HH:MM").

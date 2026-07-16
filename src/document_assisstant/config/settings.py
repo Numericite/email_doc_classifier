@@ -17,7 +17,7 @@ class Settings:
     nextcloud_url = "https://nextcloud.numericite.fr/remote.php/webdav"
     nextcloud_user = os.getenv("NEXTCLOUD_USER")
     nextcloud_password = os.getenv("NEXTCLOUD_PASSWORD")   
-    base_remote_path = "1 - Gestion administrative/tests"   # dossier racine de classement
+    base_remote_path = "2 - Projets"   # dossier racine de classement
     
     # Chemins
     inbox_temp = Path("data/inbox_temp")
