@@ -11,13 +11,19 @@ from classification.preparation_prompt_dossier import (
 # Schéma structuré : le LLM renvoie la LISTE des index de dossiers qui conviennent
 # (vide si aucun, plusieurs en cas d'ambiguïté) + un score.
 # output_config garantit une réponse JSON valide et conforme à ce schéma.
+TYPES_DOCUMENT = [
+    "facture", "devis", "contrat", "avenant", "bon_de_commande",
+    "document_administratif", "autre",
+]
+
 SCHEMA_DOSSIER = {
     "type": "object",
     "properties": {
         "dossier_ids": {"type": "array", "items": {"type": "integer"}},
+        "type_document": {"type": "string", "enum": TYPES_DOCUMENT},
         "score_confiance": {"type": "number"},
     },
-    "required": ["dossier_ids", "score_confiance"],
+    "required": ["dossier_ids", "type_document", "score_confiance"],
     "additionalProperties": False,
 }
 
@@ -55,5 +61,6 @@ class ClassifierV2:
         return {
             "dossier_ids": dossier_ids,
             "dossiers": dossiers_proposes,
+            "type_document": data["type_document"],
             "score_confiance": data["score_confiance"],
         }
