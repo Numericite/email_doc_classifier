@@ -4,7 +4,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea, QFrame,
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit,
     QFileDialog, QMessageBox, QGraphicsDropShadowEffect,
 )
 from PySide6.QtGui import QDesktopServices, QFont, QColor
@@ -46,10 +46,12 @@ QScrollArea {{ border: none; }}
 
 #titre {{ font-size: 24px; font-weight: bold; color: {TEXTE}; }}
 
-/* Carte d'un mail */
+/* Carte d'un mail : blanche sur fond gris + liseré bleu à gauche, pour que
+   chaque mail se détache nettement du suivant. */
 #carteMail {{
     background: white;
     border: 1px solid {BORDURE};
+    border-left: 4px solid {BLEU};
     border-radius: 14px;
 }}
 #expediteurNom {{ font-size: 16px; font-weight: bold; color: {TEXTE}; }}
@@ -64,9 +66,10 @@ QScrollArea {{ border: none; }}
     font-weight: bold;
 }}
 
-/* Carte d'un document (bordurée) */
+/* Carte d'un document : gris léger, pour se détacher du blanc de la carte mail
+   dans laquelle elle est imbriquée. */
 #carteDoc {{
-    background: white;
+    background: {FOND};
     border: 1px solid {BORDURE};
     border-radius: 12px;
 }}
@@ -163,7 +166,7 @@ class FenetrePrincipale(QMainWindow):
         self.conteneur = QWidget()
         self.liste = QVBoxLayout(self.conteneur)
         self.liste.setContentsMargins(24, 8, 24, 24)
-        self.liste.setSpacing(16)
+        self.liste.setSpacing(24)
         self.liste.setAlignment(Qt.AlignTop)
         zone.setWidget(self.conteneur)
 
@@ -274,30 +277,34 @@ class FenetrePrincipale(QMainWindow):
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(10)
 
-        # Ligne 1 : nom du fichier + pastille score.
+        # Ligne 1 : nom du fichier + pastille type de document + pastille score.
         l1 = QHBoxLayout()
         nom = QLabel(doc["nom_fichier"])
         nom.setObjectName("nomFichier")
         l1.addWidget(nom)
         l1.addStretch()
+        l1.addWidget(_pastille_type(doc.get("type_document")))
         l1.addWidget(_pastille_score(doc.get("score_confiance")))
         col.addLayout(l1)
 
-        # Ligne 2 : sélecteur du dossier Nextcloud de destination.
-        # - plusieurs candidats -> menu de choix ; un seul -> présélectionné ;
-        # - aucun -> une seule entrée « Créer : <nom généré> ».
+        # Ligne 2 : destination Nextcloud.
+        # - des candidats -> menu de choix (le plus pertinent en premier) ;
+        # - aucun candidat -> champ de saisie du nom du dossier à créer.
         l2 = QHBoxLayout()
-        l2.addWidget(QLabel("Dossier :"))
         combo_dossier = QComboBox()
+        champ_nom = None
         candidats = doc.get("dossiers_candidats") or []
         if candidats:
+            l2.addWidget(QLabel("Dossier :"))
             for c in candidats:
                 combo_dossier.addItem(c["nom"], userData=c["chemin"])
+            l2.addWidget(combo_dossier, stretch=1)
         else:
-            nom_genere = generer_nom_dossier(objet_mail, doc["nom_fichier"])
-            combo_dossier.addItem(f"➕ Créer : {nom_genere}",
-                                  userData=("__create__", nom_genere))
-        l2.addWidget(combo_dossier, stretch=1)
+            l2.addWidget(QLabel("➕ Créer un nouveau dossier:"))
+            champ_nom = QLineEdit(generer_nom_dossier(objet_mail, doc["nom_fichier"]))
+            champ_nom.setPlaceholderText(
+                f"Nom du dossier à créer dans « {settings.base_remote_path} »")
+            l2.addWidget(champ_nom, stretch=1)
         col.addLayout(l2)
 
         # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
@@ -318,7 +325,8 @@ class FenetrePrincipale(QMainWindow):
         b_tele.clicked.connect(lambda _=0, d=doc: self._telecharger(d))
         b_classe = QPushButton("✔ Classé")
         b_classe.setObjectName("primaire")
-        b_classe.clicked.connect(lambda _=0, d=doc, c=combo_dossier: self._classer(d, c))
+        b_classe.clicked.connect(
+            lambda _=0, d=doc, c=combo_dossier, ch=champ_nom: self._classer(d, c, ch))
 
         l3.addStretch()
         l3.addWidget(combo)
@@ -343,19 +351,23 @@ class FenetrePrincipale(QMainWindow):
 
     # Bouton "Classé" : dépose le document dans le dossier choisi (le crée si besoin),
     # puis enregistre le classement en base (statut="classe" + chemin distant).
-    def _classer(self, doc, combo_dossier):
+    def _classer(self, doc, combo_dossier, champ_nom=None):
         chemin_local = doc.get("chemin_local")
         if not chemin_local or not Path(chemin_local).exists():
             QMessageBox.warning(self, "Classé", "Fichier introuvable sur le disque.")
             return
 
-        data = combo_dossier.currentData()
+        # Aucun candidat : le nom saisi par l'utilisateur fait foi.
+        nom_saisi = champ_nom.text().strip() if champ_nom is not None else ""
+        if champ_nom is not None and not nom_saisi:
+            QMessageBox.warning(self, "Classé", "Donne un nom au dossier à créer.")
+            return
+
         try:
-            # Cas "aucun candidat" : on crée le dossier au même endroit que les autres.
-            if isinstance(data, tuple) and data and data[0] == "__create__":
-                dossier = creer_dossier(settings.base_remote_path, data[1])
+            if champ_nom is not None:
+                dossier = creer_dossier(settings.base_remote_path, nom_saisi)
             else:
-                dossier = data  # chemin du dossier candidat choisi
+                dossier = combo_dossier.currentData()  # chemin du candidat choisi
 
             chemin_distant = deposer_document(chemin_local, dossier)
             changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
