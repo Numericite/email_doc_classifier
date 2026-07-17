@@ -54,13 +54,15 @@ def executer_pipeline(hours=1000):
             try:
                 texte = prep.prepare(chemin)
                 res = classifier.classer_dossier(email["sujet"], texte, dossiers)
-                print(f"  {len(res['dossiers'])} dossier(s) candidat(s), "
+                print(f"  type={res['type_document']}, "
+                      f"{len(res['dossiers'])} dossier(s) candidat(s), "
                       f"score={res['score_confiance']}")
 
                 analyses.append({
                     "nom_fichier": fichier.name,
                     "chemin_local": chemin,
                     "texte_extrait": texte,
+                    "type_document": res["type_document"],
                     "score_confiance": res["score_confiance"],
                     "dossiers_candidats": res["dossiers"],   # liste {nom, chemin}
                 })
