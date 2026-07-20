@@ -7,6 +7,7 @@ from config.settings import settings
 from emails.client import EmailClient
 from extraction.data_preparation import DataPreparation
 from nextcloud.lister_dossiers import lister_dossiers
+from ricobot.lister_projet_ricot import lister_projets
 from classification.classifier_v2 import ClassifierV2
 from databases.repository import (
     init_db,
@@ -35,6 +36,10 @@ def executer_pipeline(hours=1000):
     dossiers = lister_dossiers(CHEMIN_NEXTCLOUD)
     print(f"{len(dossiers)} dossier(s) Nextcloud (< 1 an) dans « {CHEMIN_NEXTCLOUD} ».")
 
+    # Missions Ricobot (bons de commande), servent à rattacher un BDC à son projet.
+    projets_ricobot = lister_projets()
+    print(f"{len(projets_ricobot)} mission(s) Ricobot sur bon de commande.")
+
     prep = DataPreparation()
     classifier = ClassifierV2()
 
@@ -58,13 +63,23 @@ def executer_pipeline(hours=1000):
                       f"{len(res['dossiers'])} dossier(s) candidat(s), "
                       f"score={res['score_confiance']}")
 
+                # 2e appel LLM, UNIQUEMENT pour les bons de commande : mission
+                # Ricobot + extraction des champs du BDC.
+                bdc = None
+                if res["type_document"] == "bon_de_commande":
+                    dossier_hint = res["dossiers"][0]["nom"] if res["dossiers"] else ""
+                    bdc = classifier.classer_ricobot(
+                        email["sujet"], texte, projets_ricobot, dossier_hint)
+                    print(f"  BDC → {len(bdc['missions'])} mission(s) Ricobot, "
+                          f"ref={bdc['reference']!r}")
+
                 analyses.append({
                     "nom_fichier": fichier.name,
                     "chemin_local": chemin,
-                    "texte_extrait": texte,
                     "type_document": res["type_document"],
                     "score_confiance": res["score_confiance"],
                     "dossiers_candidats": res["dossiers"],   # liste {nom, chemin}
+                    "bdc_ricobot": bdc,                      # None si pas un BDC
                 })
             except Exception as e:
                 print(f"  [ERREUR] {type(e).__name__}: {e} — document ignoré.")
