@@ -12,7 +12,9 @@ from PySide6.QtCore import QUrl, Qt
 
 from config.settings import settings
 from databases.repository import init_db, lister_mails, changer_statut
-from nextcloud.depot import deposer_document, creer_dossier, generer_nom_dossier
+from nextcloud.depot import deposer_document, creer_dossier
+from ricobot.lister_projet_ricot import lister_projets
+from ricobot.remplissage_bdc import remplir_bdc
 
 
 # Les statuts, dans l'ordre du menu déroulant : (clé interne, libellé affiché).
@@ -148,6 +150,14 @@ class FenetrePrincipale(QMainWindow):
         self.resize(1000, 720)
         self.setStyleSheet(STYLE)
 
+        # Missions Ricobot : chargées une fois, pour le sélecteur des bons de
+        # commande (permet à l'utilisateur de corriger le projet si le LLM se trompe).
+        try:
+            self.projets_ricobot = lister_projets()
+        except Exception as e:
+            print(f"[!] Missions Ricobot indisponibles : {e}")
+            self.projets_ricobot = []
+
         # En-tête : titre + bouton rafraîchir.
         entete = QWidget()
         h = QHBoxLayout(entete)
@@ -257,7 +267,8 @@ class FenetrePrincipale(QMainWindow):
         col.addWidget(sep)
 
         for doc in mail["documents"]:
-            col.addWidget(self._carte_document(doc, mail.get("objet") or ""))
+            col.addWidget(self._carte_document(
+                doc, mail.get("objet") or "", mail.get("date_mail")))
         return carte
 
     # Petit avatar rond avec l'initiale de l'expéditeur (aide à distinguer les mails).
@@ -270,20 +281,21 @@ class FenetrePrincipale(QMainWindow):
         return a
 
     # Une carte bordurée par document : nom, score, dossier (select), statut, actions.
-    def _carte_document(self, doc, objet_mail=""):
+    def _carte_document(self, doc, objet_mail="", date_mail=None):
         carte = QFrame()
         carte.setObjectName("carteDoc")
         col = QVBoxLayout(carte)
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(10)
 
-        # Ligne 1 : nom du fichier + pastille type de document + pastille score.
+        # Ligne 1 : nom du fichier + type de document juste à sa droite,
+        # puis le score poussé à l'extrémité droite.
         l1 = QHBoxLayout()
         nom = QLabel(doc["nom_fichier"])
         nom.setObjectName("nomFichier")
         l1.addWidget(nom)
-        l1.addStretch()
         l1.addWidget(_pastille_type(doc.get("type_document")))
+        l1.addStretch()
         l1.addWidget(_pastille_score(doc.get("score_confiance")))
         col.addLayout(l1)
 
@@ -301,11 +313,17 @@ class FenetrePrincipale(QMainWindow):
             l2.addWidget(combo_dossier, stretch=1)
         else:
             l2.addWidget(QLabel("➕ Créer un nouveau dossier:"))
-            champ_nom = QLineEdit(generer_nom_dossier(objet_mail, doc["nom_fichier"]))
+            champ_nom = QLineEdit("Insérer un nom de dossier pour classser ce document")
             champ_nom.setPlaceholderText(
                 f"Nom du dossier à créer dans « {settings.base_remote_path} »")
             l2.addWidget(champ_nom, stretch=1)
         col.addLayout(l2)
+
+        # Bloc BON DE COMMANDE : projet Ricobot (corrigeable) + champs extraits.
+        # Affiché uniquement pour les bons de commande.
+        champs_bdc = None
+        if doc.get("type_document") == "bon_de_commande":
+            champs_bdc = self._bloc_bdc(col, doc.get("bdc_ricobot") or {}, date_mail)
 
         # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
         l3 = QHBoxLayout()
@@ -323,7 +341,7 @@ class FenetrePrincipale(QMainWindow):
         b_apercu.clicked.connect(lambda _=0, d=doc: self._apercu(d))
         b_tele = QPushButton("⬇ Télécharger")
         b_tele.clicked.connect(lambda _=0, d=doc: self._telecharger(d))
-        b_classe = QPushButton("✔ Classé")
+        b_classe = QPushButton("✔ Classer")
         b_classe.setObjectName("primaire")
         b_classe.clicked.connect(
             lambda _=0, d=doc, c=combo_dossier, ch=champ_nom: self._classer(d, c, ch))
@@ -332,10 +350,86 @@ class FenetrePrincipale(QMainWindow):
         l3.addWidget(combo)
         l3.addWidget(b_apercu)
         l3.addWidget(b_tele)
+        if champs_bdc is not None:
+            b_bdc = QPushButton("🧾 Remplir BDC")
+            b_bdc.setObjectName("primaire")
+            b_bdc.clicked.connect(
+                lambda _=0, d=doc, ch=champs_bdc: self._remplir_bdc(d, ch))
+            l3.addWidget(b_bdc)
         l3.addWidget(b_classe)
         col.addLayout(l3)
 
         return carte
+
+    # Bloc d'un bon de commande : sélecteur de mission Ricobot (pré-positionné sur
+    # la proposition du LLM, mais modifiable) + champs extraits éditables.
+    # Renvoie les widgets pour que le bouton « Remplir BDC » les relise.
+    def _bloc_bdc(self, col, bdc, date_mail=None):
+        # Ligne : mission Ricobot (toutes les missions, pour corriger le LLM).
+        ligne_mission = QHBoxLayout()
+        ligne_mission.addWidget(QLabel("🧾 Projet Ricobot :"))
+        combo_mission = QComboBox()
+        for p in self.projets_ricobot:
+            combo_mission.addItem(f"{p['nom']} — {p['company']}", userData=p["id"])
+        # Pré-sélection : 1re mission proposée par le LLM, si elle existe.
+        proposes = bdc.get("mission_ids") or []
+        if proposes:
+            idx = combo_mission.findData(proposes[0])
+            if idx >= 0:
+                combo_mission.setCurrentIndex(idx)
+        ligne_mission.addWidget(combo_mission, stretch=1)
+        col.addLayout(ligne_mission)
+
+        # Ligne : les 3 champs importants — début (= réception mail), fin, montant.
+        ligne_champs = QHBoxLayout()
+        champ_debut = QLineEdit(str(date_mail)[:10] if date_mail else "")
+        champ_debut.setPlaceholderText("Début (AAAA-MM-JJ)")
+        champ_fin = QLineEdit(bdc.get("end_date") or "")
+        champ_fin.setPlaceholderText("Fin (AAAA-MM-JJ)")
+        montant = bdc.get("amount")
+        champ_montant = QLineEdit("" if montant in (None, 0) else str(montant))
+        champ_montant.setPlaceholderText("Montant")
+        for lib, w in (("Début", champ_debut), ("Fin", champ_fin), ("Montant", champ_montant)):
+            ligne_champs.addWidget(QLabel(lib + " :"))
+            ligne_champs.addWidget(w)
+        col.addLayout(ligne_champs)
+
+        return {
+            "combo_mission": combo_mission,
+            # abréviation + référence : gardées pour l'API mais non affichées.
+            "abbreviation": bdc.get("abbreviation") or "",
+            "reference": bdc.get("reference") or "",
+            "start_date": champ_debut,
+            "end_date": champ_fin,
+            "amount": champ_montant,
+        }
+
+    # Bouton « Remplir BDC » : envoie le bon de commande à Ricobot pour la mission
+    # retenue (celle du LLM ou celle choisie par l'utilisateur).
+    def _remplir_bdc(self, doc, champs):
+        mission_id = champs["combo_mission"].currentData()
+        if mission_id is None:
+            QMessageBox.warning(self, "Remplir BDC", "Aucune mission Ricobot sélectionnée.")
+            return
+        # Montant : texte -> nombre (tolère virgule, espaces, symbole €).
+        brut = champs["amount"].text().replace("€", "").replace(",", ".").replace(" ", "")
+        try:
+            amount = float(brut) if brut else 0
+        except ValueError:
+            amount = 0
+        try:
+            remplir_bdc(
+                mission_id,
+                abbreviation=champs["abbreviation"],
+                reference=champs["reference"],
+                start_date=champs["start_date"].text().strip(),
+                end_date=champs["end_date"].text().strip(),
+                amount=amount,
+            )
+            QMessageBox.information(self, "Remplir BDC",
+                                    "Bon de commande envoyé à Ricobot.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur Ricobot", f"{type(e).__name__}: {e}")
 
     # Applique au select la couleur correspondant au statut.
     def _appliquer_couleur_statut(self, combo, statut):
