@@ -27,7 +27,6 @@ SCHEMA_SQL = (
 
         nom_fichier      VARCHAR(512) NOT NULL,
         chemin_local     TEXT,                       -- aperçu + téléchargement
-        texte_extrait    TEXT,
 
         -- Résultat de l'analyse LLM (proposition figée au moment de l'analyse)
         type_document    VARCHAR(64),
@@ -40,6 +39,11 @@ SCHEMA_SQL = (
         -- [{"nom": ..., "chemin": ...}, ...] — vide si aucun (→ création).
         dossiers_candidats JSONB,
 
+        -- Résultat de l'appel Ricobot (bons de commande uniquement), objet JSON :
+        -- {mission_ids, missions, titre, reference, date_debut, date_fin,
+        --  score_confiance} — NULL pour les documents qui ne sont pas des BDC.
+        bdc_ricobot JSONB,
+
         -- État / décision
         statut           VARCHAR(32) NOT NULL DEFAULT 'en_attente',
         sous_dossier     VARCHAR(64),                -- Facturation / Documents_Admin
@@ -50,6 +54,9 @@ SCHEMA_SQL = (
 
     # Ajout de la colonne sur une base déjà créée (idempotent).
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS dossiers_candidats JSONB;",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS bdc_ricobot JSONB;",
+    # On ne stocke plus le texte extrait (volumineux, jamais relu).
+    "ALTER TABLE documents DROP COLUMN IF EXISTS texte_extrait;",
 
     # Index : accélèrent les requêtes de l'UI (documents d'un mail, filtre par statut).
     "CREATE INDEX IF NOT EXISTS idx_documents_mail_id ON documents(mail_id);",

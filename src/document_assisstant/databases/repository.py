@@ -37,8 +37,8 @@ def mail_deja_traite(message_id):
 
 # Enregistre un mail et ses documents analysés (une transaction : tout ou rien).
 # - email    : dict issu de emails/ (message_id, sujet, sender, nom_sender, date)
-# - analyses : liste de dicts {nom_fichier, chemin_local, texte_extrait,
-#              type_document, projet (dict|None), score_confiance}
+# - analyses : liste de dicts {nom_fichier, chemin_local, type_document,
+#              score_confiance, dossiers_candidats, bdc_ricobot}
 # Anti-doublon : si le message_id est déjà en base, on ignore (déjà traité).
 # Renvoie True si inséré, False si ignoré.
 def enregistrer_mail_et_documents(email, analyses):
@@ -66,16 +66,17 @@ def enregistrer_mail_et_documents(email, analyses):
             cur.execute(
                 """
                 INSERT INTO documents (
-                    mail_id, nom_fichier, chemin_local, texte_extrait, type_document,
+                    mail_id, nom_fichier, chemin_local, type_document,
                     projet_nom, projet_client, projet_nextcloud, score_confiance,
-                    dossiers_candidats
+                    dossiers_candidats, bdc_ricobot
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (mail_id, a["nom_fichier"], a.get("chemin_local"), a.get("texte_extrait"),
+                (mail_id, a["nom_fichier"], a.get("chemin_local"),
                  a.get("type_document"), projet.get("projet_name"), projet.get("client"),
                  projet.get("nextcloud"), a.get("score_confiance"),
-                 Jsonb(a.get("dossiers_candidats") or [])),
+                 Jsonb(a.get("dossiers_candidats") or []),
+                 Jsonb(a["bdc_ricobot"]) if a.get("bdc_ricobot") else None),
             )
 
         conn.commit()
