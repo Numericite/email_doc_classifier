@@ -46,6 +46,10 @@ class Settings:
     notion_token = os.getenv("NOTION_TOKEN")
     notion_database_id = os.getenv("NOTION_DATABASE_ID")
 
+    #ricobot
+    ricobot_url = os.getenv("RICOBOT_URL")
+    ricobot_token = os.getenv("RICOBOT_API")
+
     
     #Analyse des document
     min_text_chars = 50
