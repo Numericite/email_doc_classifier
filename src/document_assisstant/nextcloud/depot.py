@@ -39,8 +39,6 @@ def deposer_document(chemin_local, dossier_cible):
 
 
 # Crée un dossier dans Nextcloud (MKCOL), sous `chemin_parent`.
-# 201 = créé, 405 = existe déjà (on considère les deux comme OK).
-# Renvoie le chemin relatif du dossier créé.
 def creer_dossier(chemin_parent, nom):
     chemin = f"{chemin_parent.strip('/')}/{nom.strip('/')}"
 
