@@ -1,18 +1,23 @@
 import sys
+import html
 import shutil
+import tempfile
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea, QFrame,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit,
     QFileDialog, QMessageBox, QGraphicsDropShadowEffect,
+    QDialog, QFormLayout, QDialogButtonBox,
 )
 from PySide6.QtGui import QDesktopServices, QFont, QColor
 from PySide6.QtCore import QUrl, Qt
 
 from config.settings import settings
-from databases.repository import init_db, lister_mails, changer_statut
-from nextcloud.depot import deposer_document, creer_dossier
+from databases.repository import (
+    init_db, lister_mails, changer_statut, maj_bdc_ricobot, supprimer_mail,
+)
+from nextcloud.depot import deposer_document, creer_dossier, telecharger_document
 from ricobot.lister_projet_ricot import lister_projets
 from ricobot.remplissage_bdc import remplir_bdc
 
@@ -47,6 +52,13 @@ QWidget {{ background: {FOND}; color: {TEXTE}; font-size: 14px; }}
 QScrollArea {{ border: none; }}
 
 #titre {{ font-size: 24px; font-weight: bold; color: {TEXTE}; }}
+
+/* Boîte de recherche : cadre arrondi blanc contenant la loupe + le champ. */
+#boiteRecherche {{
+    background: white;
+    border: 1px solid {BORDURE};
+    border-radius: 10px;
+}}
 
 /* Carte d'un mail : blanche sur fond gris + liseré bleu à gauche, pour que
    chaque mail se détache nettement du suivant. */
@@ -158,6 +170,18 @@ class FenetrePrincipale(QMainWindow):
             print(f"[!] Missions Ricobot indisponibles : {e}")
             self.projets_ricobot = []
 
+        # Nom du dossier créé par mail (mail_id -> nom) : mémorisé pour que les
+        # documents suivants d'un même mail réutilisent le même dossier sans
+        # avoir à retaper le nom après un rafraîchissement.
+        self._dossier_mail = {}
+
+        # Filtre par statut (None = tous). Piloté par la barre de filtre.
+        self._filtre_statut = None
+        self._boutons_filtre = {}
+
+        # Texte de la barre de recherche (vide = pas de filtre texte).
+        self._recherche = ""
+
         # En-tête : titre + bouton rafraîchir.
         entete = QWidget()
         h = QHBoxLayout(entete)
@@ -180,14 +204,53 @@ class FenetrePrincipale(QMainWindow):
         self.liste.setAlignment(Qt.AlignTop)
         zone.setWidget(self.conteneur)
 
+        # Ligne unique : boîte de recherche (loupe + champ) à gauche, puis les filtres.
+        barre = QWidget()
+        bf = QHBoxLayout(barre)
+        bf.setContentsMargins(24, 0, 24, 8)
+        bf.setSpacing(10)
+
+        # Boîte de recherche arrondie : loupe (Segoe MDL2 Assets) + champ sans bordure.
+        loupe = QLabel(chr(0xE721))   # U+E721 = loupe
+        loupe.setStyleSheet(
+            f"font-family:'Segoe MDL2 Assets'; color:{MUET}; font-size:14px;")
+        recherche = QLineEdit()
+        recherche.setPlaceholderText("Rechercher…")
+        recherche.setClearButtonEnabled(True)
+        recherche.setFrame(False)
+        recherche.setStyleSheet("background:transparent; border:none;")
+        recherche.textChanged.connect(self._rechercher)
+        boite = QFrame()
+        boite.setObjectName("boiteRecherche")
+        boite.setMinimumWidth(300)
+        hb = QHBoxLayout(boite)
+        hb.setContentsMargins(12, 4, 12, 4)
+        hb.setSpacing(8)
+        hb.addWidget(loupe)
+        hb.addWidget(recherche)
+        bf.addWidget(boite)
+
+        # Filtres par statut, juste après la recherche.
+        etiquette = QLabel("Filtrer :")
+        etiquette.setStyleSheet(f"color:{MUET};")
+        bf.addWidget(etiquette)
+        for cle, libelle in [(None, "Tous"), *STATUTS]:
+            b = QPushButton(libelle)
+            b.clicked.connect(lambda _=0, c=cle: self._appliquer_filtre(c))
+            self._boutons_filtre[cle] = b
+            bf.addWidget(b)
+        bf.addStretch()
+
         centre = QWidget()
         v = QVBoxLayout(centre)
         v.setContentsMargins(0, 0, 0, 0)
         v.addWidget(entete)
+        v.addWidget(barre)
         v.addWidget(zone)
         self.setCentralWidget(centre)
 
-        self.rafraichir()
+        # Affiche tout au démarrage (et marque le bouton "Tous" comme actif).
+        self._appliquer_filtre(None)
 
     # Vide et reconstruit la liste depuis la base (repository.lister_mails).
     def rafraichir(self):
@@ -196,15 +259,69 @@ class FenetrePrincipale(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
-        mails = lister_mails()
+        mails = lister_mails(self._filtre_statut)
+        if self._recherche:
+            mails = [m for m in mails if self._mail_correspond(m)]
         if not mails:
-            vide = QLabel("Aucun document. Lance le pipeline pour en récupérer.")
+            if self._recherche:
+                texte = f"Aucun résultat pour « {self._recherche} »."
+            else:
+                libelle = dict(STATUTS).get(self._filtre_statut)
+                texte = (f"Aucun document « {libelle} »." if libelle
+                         else "Aucun document. Lance le pipeline pour en récupérer.")
+            vide = QLabel(texte)
             vide.setStyleSheet(f"color:{MUET};")
             self.liste.addWidget(vide)
             return
 
         for mail in mails:
             self.liste.addWidget(self._carte_mail(mail))
+
+    # Applique un filtre par statut (None = tous) et met la barre à jour.
+    def _appliquer_filtre(self, statut):
+        self._filtre_statut = statut
+        for cle, bouton in self._boutons_filtre.items():
+            actif = (cle == statut)
+            bouton.setStyleSheet(f"background:{BLEU}; color:white;" if actif else "")
+        self.rafraichir()
+
+    # Barre de recherche : mémorise le texte saisi et rafraîchit la liste.
+    def _rechercher(self, texte):
+        self._recherche = texte.strip().lower()
+        self.rafraichir()
+
+    # True si le texte recherché apparaît dans un champ du mail ou de ses documents
+    # (expéditeur, objet, nom de fichier, nom de projet). Recherche insensible à la casse.
+    def _mail_correspond(self, mail):
+        q = self._recherche
+        champs = [mail.get("expediteur"), mail.get("expediteur_nom"), mail.get("objet")]
+        for d in mail["documents"]:
+            champs.append(d.get("nom_fichier"))
+            champs.append(d.get("projet_nom"))
+        return any(q in (c or "").lower() for c in champs)
+
+    # Corbeille : supprime un mail et ses documents (après confirmation).
+    # Les fichiers déjà déposés dans Nextcloud ne sont pas touchés ; on nettoie
+    # seulement les copies locales encore présentes.
+    def _supprimer_mail(self, mail):
+        nb = len(mail["documents"])
+        rep = QMessageBox.question(
+            self, "Supprimer",
+            f"Supprimer ce mail et ses {nb} document(s) de la liste ?\n"
+            "(Les fichiers déjà déposés dans Nextcloud ne sont pas supprimés.)")
+        if rep != QMessageBox.StandardButton.Yes:
+            return
+
+        for d in mail["documents"]:
+            chemin = d.get("chemin_local")
+            if chemin and Path(chemin).exists():
+                try:
+                    Path(chemin).unlink()
+                except OSError as e:
+                    print(f"[!] Copie locale non supprimée ({chemin}) : {e}")
+
+        supprimer_mail(mail["id"])
+        self.rafraichir()
 
     # Une carte par mail : en-tête (expéditeur + email + objet) puis ses documents.
     def _carte_mail(self, mail):
@@ -222,7 +339,7 @@ class FenetrePrincipale(QMainWindow):
         col.setContentsMargins(18, 16, 18, 16)
         col.setSpacing(12)
 
-        # En-tête horizontal : [avatar] [expéditeur]  [objet]  [date].
+        # En-tête horizontal : [avatar] [expéditeur]  [objet — date]  [poubelle].
         entete = QHBoxLayout()
         entete.setSpacing(12)
         entete.addWidget(self._avatar(mail), alignment=Qt.AlignTop)
@@ -246,17 +363,25 @@ class FenetrePrincipale(QMainWindow):
             bloc.addWidget(principal)
         entete.addLayout(bloc)
 
-        # Objet, à côté de l'expéditeur, bien visible.
-        objet = QLabel(mail.get("objet") or "(sans objet)")
+        # Objet + date de réception (date en gras), à côté de l'expéditeur.
+        sujet = html.escape(mail.get("objet") or "(sans objet)")
+        d = self._format_date(mail.get("date_mail"))
+        objet = QLabel(f"{sujet} — <b>{html.escape(d)}</b>" if d else sujet)
         objet.setObjectName("objet")
+        objet.setTextFormat(Qt.RichText)
         objet.setWordWrap(True)
         entete.addSpacing(20)
         entete.addWidget(objet, stretch=1)
 
-        # Date de réception, à droite.
-        date = QLabel(self._format_date(mail.get("date_mail")))
-        date.setObjectName("date")
-        entete.addWidget(date, alignment=Qt.AlignTop)
+        poubelle = QPushButton("x")
+          # croix rouge = supprimer (ASCII, toujours rendu)
+        poubelle.setToolTip("Supprimer ce mail et ses documents de la liste")
+        poubelle.setFixedSize(34, 34)
+        poubelle.setStyleSheet(
+            "background:#FDECEC; color:#E0342B; border-radius:8px;"
+            " font-size:16px; font-weight:bold;")
+        poubelle.clicked.connect(lambda _=0, m=mail: self._supprimer_mail(m))
+        entete.addWidget(poubelle, alignment=Qt.AlignTop)
 
         col.addLayout(entete)
 
@@ -266,10 +391,56 @@ class FenetrePrincipale(QMainWindow):
         sep.setStyleSheet(f"background:{BORDURE}; border:none;")
         col.addWidget(sep)
 
+        # Un mail = un projet = un dossier : UNE SEULE destination pour tout le mail.
+        # On agrège les dossiers candidats trouvés pour n'importe quel document.
+        # S'il y en a -> menu de choix. Sinon -> case de création (repli).
+        candidats_mail, vus = [], set()
+        for d in mail["documents"]:
+            for c in (d.get("dossiers_candidats") or []):
+                if c["chemin"] not in vus:
+                    vus.add(c["chemin"])
+                    candidats_mail.append(c)
+
+        ligne = QHBoxLayout()
+        dest_combo, dest_champ = None, None
+        if candidats_mail:
+            ligne.addWidget(QLabel("Dossier du mail :"))
+            dest_combo = QComboBox()
+            for c in candidats_mail:
+                dest_combo.addItem(c["nom"], userData=c["chemin"])
+            ligne.addWidget(dest_combo, stretch=1)
+        else:
+            ligne.addWidget(QLabel("➕ Dossier à créer :"))
+            # Repré-rempli si un dossier a déjà été créé pour ce mail : d'abord la
+            # mémoire de session, sinon retrouvé en base (persiste après redémarrage).
+            defaut = self._dossier_mail.get(mail["id"]) or self._dossier_cree_du_mail(mail)
+            dest_champ = QLineEdit(defaut)
+            dest_champ.setPlaceholderText(
+                f"Nom du dossier à créer dans « {settings.base_remote_path} »")
+            ligne.addWidget(dest_champ, stretch=1)
+
+        # Score de rattachement du dossier, juste à droite du champ (meilleur score
+        # parmi les documents du mail — un mail = un projet).
+        scores = [d.get("score_confiance") for d in mail["documents"]
+                  if d.get("score_confiance") is not None]
+        ligne.addWidget(_pastille_score(max(scores) if scores else None))
+        col.addLayout(ligne)
+
+        destination = {"combo": dest_combo, "champ": dest_champ}
         for doc in mail["documents"]:
             col.addWidget(self._carte_document(
-                doc, mail.get("objet") or "", mail.get("date_mail")))
+                doc, mail.get("objet") or "", mail.get("date_mail"), destination))
         return carte
+
+    # Retrouve le nom du dossier déjà créé pour un mail, à partir d'un document
+    # déjà classé (son chemin Nextcloud est en base). Persiste après redémarrage.
+    def _dossier_cree_du_mail(self, mail):
+        for d in mail["documents"]:
+            chemin = d.get("chemin_nextcloud")
+            if chemin:
+                dossier = chemin.rsplit("/", 1)[0]      # enlève le nom de fichier
+                return dossier.rsplit("/", 1)[-1]        # dernier segment = nom du dossier
+        return ""
 
     # Petit avatar rond avec l'initiale de l'expéditeur (aide à distinguer les mails).
     def _avatar(self, mail):
@@ -280,50 +451,30 @@ class FenetrePrincipale(QMainWindow):
         a.setAlignment(Qt.AlignCenter)
         return a
 
-    # Une carte bordurée par document : nom, score, dossier (select), statut, actions.
-    def _carte_document(self, doc, objet_mail="", date_mail=None):
+    # Une carte bordurée par document : nom, score, statut, actions.
+    # La destination Nextcloud est commune au mail (cf. _carte_mail).
+    def _carte_document(self, doc, objet_mail="", date_mail=None, destination=None):
         carte = QFrame()
         carte.setObjectName("carteDoc")
         col = QVBoxLayout(carte)
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(10)
 
-        # Ligne 1 : nom du fichier + type de document juste à sa droite,
-        # puis le score poussé à l'extrémité droite.
+        # Ligne 1 : nom du fichier + type de document juste à sa droite.
+        # (Le score est affiché au niveau du mail, à côté du dossier.)
         l1 = QHBoxLayout()
         nom = QLabel(doc["nom_fichier"])
         nom.setObjectName("nomFichier")
         l1.addWidget(nom)
         l1.addWidget(_pastille_type(doc.get("type_document")))
         l1.addStretch()
-        l1.addWidget(_pastille_score(doc.get("score_confiance")))
         col.addLayout(l1)
-
-        # Ligne 2 : destination Nextcloud.
-        # - des candidats -> menu de choix (le plus pertinent en premier) ;
-        # - aucun candidat -> champ de saisie du nom du dossier à créer.
-        l2 = QHBoxLayout()
-        combo_dossier = QComboBox()
-        champ_nom = None
-        candidats = doc.get("dossiers_candidats") or []
-        if candidats:
-            l2.addWidget(QLabel("Dossier :"))
-            for c in candidats:
-                combo_dossier.addItem(c["nom"], userData=c["chemin"])
-            l2.addWidget(combo_dossier, stretch=1)
-        else:
-            l2.addWidget(QLabel("➕ Créer un nouveau dossier:"))
-            champ_nom = QLineEdit("Insérer un nom de dossier pour classser ce document")
-            champ_nom.setPlaceholderText(
-                f"Nom du dossier à créer dans « {settings.base_remote_path} »")
-            l2.addWidget(champ_nom, stretch=1)
-        col.addLayout(l2)
 
         # Bloc BON DE COMMANDE : projet Ricobot (corrigeable) + champs extraits.
         # Affiché uniquement pour les bons de commande.
         champs_bdc = None
         if doc.get("type_document") == "bon_de_commande":
-            champs_bdc = self._bloc_bdc(col, doc.get("bdc_ricobot") or {}, date_mail)
+            champs_bdc = self._bloc_bdc(col, doc.get("bdc_ricobot") or {}, date_mail, doc)
 
         # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
         l3 = QHBoxLayout()
@@ -344,7 +495,7 @@ class FenetrePrincipale(QMainWindow):
         b_classe = QPushButton("✔ Classer")
         b_classe.setObjectName("primaire")
         b_classe.clicked.connect(
-            lambda _=0, d=doc, c=combo_dossier, ch=champ_nom: self._classer(d, c, ch))
+            lambda _=0, d=doc, dest=destination: self._classer(d, dest))
 
         l3.addStretch()
         l3.addWidget(combo)
@@ -361,13 +512,12 @@ class FenetrePrincipale(QMainWindow):
 
         return carte
 
-    # Bloc d'un bon de commande : sélecteur de mission Ricobot (pré-positionné sur
-    # la proposition du LLM, mais modifiable) + champs extraits éditables.
-    # Renvoie les widgets pour que le bouton « Remplir BDC » les relise.
-    def _bloc_bdc(self, col, bdc, date_mail=None):
-        # Ligne : mission Ricobot (toutes les missions, pour corriger le LLM).
-        ligne_mission = QHBoxLayout()
-        ligne_mission.addWidget(QLabel("🧾 Projet Ricobot :"))
+    # Bloc d'un bon de commande : sélecteur de mission Ricobot (largeur réduite,
+    # modifiable) + un crayon ✏️ à droite pour éditer titre / dates.
+    # Les valeurs éditées sont stockées dans un dict relu par « Remplir BDC ».
+    def _bloc_bdc(self, col, bdc, date_mail, doc):
+        ligne = QHBoxLayout()
+        ligne.addWidget(QLabel("🧾 Projet Ricobot :"))
         combo_mission = QComboBox()
         for p in self.projets_ricobot:
             combo_mission.addItem(f"{p['nom']} — {p['company']}", userData=p["id"])
@@ -377,32 +527,71 @@ class FenetrePrincipale(QMainWindow):
             idx = combo_mission.findData(proposes[0])
             if idx >= 0:
                 combo_mission.setCurrentIndex(idx)
-        ligne_mission.addWidget(combo_mission, stretch=1)
-        col.addLayout(ligne_mission)
+        combo_mission.setMaximumWidth(460)          # largeur du menu Ricobot
+        ligne.addWidget(combo_mission)
 
-        # Ligne : les 3 champs importants — début (= réception mail), fin, montant.
-        ligne_champs = QHBoxLayout()
-        champ_debut = QLineEdit(str(date_mail)[:10] if date_mail else "")
-        champ_debut.setPlaceholderText("Début (AAAA-MM-JJ)")
-        champ_fin = QLineEdit(bdc.get("end_date") or "")
-        champ_fin.setPlaceholderText("Fin (AAAA-MM-JJ)")
-        montant = bdc.get("amount")
-        champ_montant = QLineEdit("" if montant in (None, 0) else str(montant))
-        champ_montant.setPlaceholderText("Montant")
-        for lib, w in (("Début", champ_debut), ("Fin", champ_fin), ("Montant", champ_montant)):
-            ligne_champs.addWidget(QLabel(lib + " :"))
-            ligne_champs.addWidget(w)
-        col.addLayout(ligne_champs)
-
-        return {
-            "combo_mission": combo_mission,
-            # abréviation + référence : gardées pour l'API mais non affichées.
-            "abbreviation": bdc.get("abbreviation") or "",
-            "reference": bdc.get("reference") or "",
-            "start_date": champ_debut,
-            "end_date": champ_fin,
-            "amount": champ_montant,
+        # Valeurs éditables du BDC (date de début = réception du mail par défaut).
+        valeurs = {
+            "titre": bdc.get("abbreviation") or "",
+            "reference": bdc.get("reference") or "",   # non édité, gardé pour l'API
+            "date_debut": bdc.get("date_debut") or (str(date_mail)[:10] if date_mail else ""),
+            "date_fin": bdc.get("end_date") or "",
+            "mission_ids": bdc.get("mission_ids") or [],
+            "missions": bdc.get("missions") or [],
+            "confidence": bdc.get("confidence"),
         }
+
+        b_edit = QPushButton("✏️")
+        b_edit.setToolTip("Voir / modifier les informations du bon de commande")
+        b_edit.clicked.connect(lambda _=0, d=doc, v=valeurs: self._editer_bdc(d, v))
+        ligne.addWidget(b_edit)          # collé au menu
+        ligne.addStretch()               # le reste de la largeur pousse à droite
+        col.addLayout(ligne)
+
+        return {"combo_mission": combo_mission, "valeurs": valeurs}
+
+    # Crayon ✏️ : fenêtre d'édition du BDC. « Valider » enregistre en base
+    # (l'envoi à Ricobot reste au bouton « Remplir BDC »).
+    def _editer_bdc(self, doc, valeurs):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Bon de commande")
+        dlg.setMinimumWidth(460)
+        form = QFormLayout(dlg)
+        form.setContentsMargins(20, 20, 20, 20)
+        form.setSpacing(12)
+
+        e_titre = QLineEdit(valeurs["titre"])
+        e_debut = QLineEdit(valeurs["date_debut"])
+        e_debut.setPlaceholderText("AAAA-MM-JJ")
+        e_fin = QLineEdit(valeurs["date_fin"])
+        e_fin.setPlaceholderText("AAAA-MM-JJ")
+        form.addRow("Titre :", e_titre)
+        form.addRow("Date de début :", e_debut)
+        form.addRow("Date de fin :", e_fin)
+
+        boutons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        boutons.button(QDialogButtonBox.StandardButton.Save).setText("Valider")
+        boutons.accepted.connect(dlg.accept)
+        boutons.rejected.connect(dlg.reject)
+        form.addRow(boutons)
+
+        if not dlg.exec():
+            return
+
+        # Applique en mémoire (relu par Remplir BDC) puis enregistre en base.
+        valeurs["titre"] = e_titre.text().strip()
+        valeurs["date_debut"] = e_debut.text().strip()
+        valeurs["date_fin"] = e_fin.text().strip()
+        maj_bdc_ricobot(doc["id"], {
+            "mission_ids": valeurs["mission_ids"],
+            "missions": valeurs["missions"],
+            "abbreviation": valeurs["titre"],
+            "reference": valeurs["reference"],
+            "date_debut": valeurs["date_debut"],
+            "end_date": valeurs["date_fin"],
+            "confidence": valeurs["confidence"],
+        })
 
     # Bouton « Remplir BDC » : envoie le bon de commande à Ricobot pour la mission
     # retenue (celle du LLM ou celle choisie par l'utilisateur).
@@ -411,23 +600,19 @@ class FenetrePrincipale(QMainWindow):
         if mission_id is None:
             QMessageBox.warning(self, "Remplir BDC", "Aucune mission Ricobot sélectionnée.")
             return
-        # Montant : texte -> nombre (tolère virgule, espaces, symbole €).
-        brut = champs["amount"].text().replace("€", "").replace(",", ".").replace(" ", "")
+        v = champs["valeurs"]
         try:
-            amount = float(brut) if brut else 0
-        except ValueError:
-            amount = 0
-        try:
-            remplir_bdc(
+            reponse = remplir_bdc(
                 mission_id,
-                abbreviation=champs["abbreviation"],
-                reference=champs["reference"],
-                start_date=champs["start_date"].text().strip(),
-                end_date=champs["end_date"].text().strip(),
-                amount=amount,
+                abbreviation=v["titre"],
+                reference=v["reference"],
+                start_date=v["date_debut"],
+                end_date=v["date_fin"],
             )
-            QMessageBox.information(self, "Remplir BDC",
-                                    "Bon de commande envoyé à Ricobot.")
+            cree_id = (reponse or {}).get("data", {}).get("id")
+            QMessageBox.information(
+                self, "Remplir BDC",
+                f"Bon de commande créé dans Ricobot (id {cree_id}).")
         except Exception as e:
             QMessageBox.critical(self, "Erreur Ricobot", f"{type(e).__name__}: {e}")
 
@@ -445,26 +630,40 @@ class FenetrePrincipale(QMainWindow):
 
     # Bouton "Classé" : dépose le document dans le dossier choisi (le crée si besoin),
     # puis enregistre le classement en base (statut="classe" + chemin distant).
-    def _classer(self, doc, combo_dossier, champ_nom=None):
+    def _classer(self, doc, destination):
         chemin_local = doc.get("chemin_local")
         if not chemin_local or not Path(chemin_local).exists():
             QMessageBox.warning(self, "Classé", "Fichier introuvable sur le disque.")
             return
 
-        # Aucun candidat : le nom saisi par l'utilisateur fait foi.
-        nom_saisi = champ_nom.text().strip() if champ_nom is not None else ""
-        if champ_nom is not None and not nom_saisi:
+        combo = (destination or {}).get("combo")
+        champ = (destination or {}).get("champ")
+
+        # Pas de dossier trouvé : le nom saisi (création) fait foi.
+        nom_saisi = champ.text().strip() if champ is not None else ""
+        if champ is not None and not nom_saisi:
             QMessageBox.warning(self, "Classé", "Donne un nom au dossier à créer.")
             return
 
         try:
-            if champ_nom is not None:
+            if champ is not None:
                 dossier = creer_dossier(settings.base_remote_path, nom_saisi)
+                # Mémorise le dossier du mail pour les documents suivants.
+                self._dossier_mail[doc["mail_id"]] = nom_saisi
             else:
-                dossier = combo_dossier.currentData()  # chemin du candidat choisi
+                dossier = combo.currentData()  # chemin du dossier choisi
 
             chemin_distant = deposer_document(chemin_local, dossier)
             changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
+
+            # Le fichier est maintenant sur Nextcloud (source de vérité) : on
+            # supprime la copie locale. Aperçu/Télécharger le reprendront depuis
+            # Nextcloud via chemin_nextcloud. L'échec de suppression n'est pas bloquant.
+            try:
+                Path(chemin_local).unlink()
+            except OSError as e:
+                print(f"[!] Copie locale non supprimée ({chemin_local}) : {e}")
+
             QMessageBox.information(self, "Classé", f"Document déposé dans :\n{dossier}")
             self.rafraichir()
         except Exception as e:
@@ -481,24 +680,46 @@ class FenetrePrincipale(QMainWindow):
         except Exception:
             return str(iso)[:16].replace("T", " ")
 
-    # 👁 Aperçu : ouvre le fichier avec l'application par défaut du système.
-    def _apercu(self, doc):
+    # Renvoie un chemin local ouvrable : la copie locale si elle existe, sinon le
+    # fichier téléchargé depuis Nextcloud (dans un dossier temporaire).
+    def _fichier_ouvrable(self, doc):
         chemin = doc.get("chemin_local")
-        if not chemin or not Path(chemin).exists():
-            QMessageBox.warning(self, "Aperçu", "Fichier introuvable sur le disque.")
-            return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(chemin).resolve())))
+        if chemin and Path(chemin).exists():
+            return Path(chemin)
+        distant = doc.get("chemin_nextcloud")
+        if distant:
+            cible = Path(tempfile.gettempdir()) / doc["nom_fichier"]
+            cible.write_bytes(telecharger_document(distant))
+            return cible
+        return None
 
-    # ⬇ Télécharger : copie le fichier vers l'emplacement choisi.
-    def _telecharger(self, doc):
-        chemin = doc.get("chemin_local")
-        if not chemin or not Path(chemin).exists():
-            QMessageBox.warning(self, "Télécharger", "Fichier introuvable sur le disque.")
+    # Aperçu : ouvre le fichier (local, ou récupéré depuis Nextcloud si supprimé).
+    def _apercu(self, doc):
+        try:
+            fichier = self._fichier_ouvrable(doc)
+        except Exception as e:
+            QMessageBox.critical(self, "Aperçu", f"Nextcloud : {e}")
             return
+        if fichier is None:
+            QMessageBox.warning(self, "Aperçu", "Document introuvable (ni local ni Nextcloud).")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(fichier.resolve())))
+
+    # ⬇ Télécharger : enregistre le fichier (local, ou récupéré depuis Nextcloud).
+    def _telecharger(self, doc):
         cible, _ = QFileDialog.getSaveFileName(self, "Enregistrer sous", doc["nom_fichier"])
-        if cible:
-            shutil.copy(chemin, cible)
-            QMessageBox.information(self, "Télécharger", "Fichier enregistré.")
+        if not cible:
+            return
+        try:
+            fichier = self._fichier_ouvrable(doc)
+        except Exception as e:
+            QMessageBox.critical(self, "Télécharger", f"Nextcloud : {e}")
+            return
+        if fichier is None:
+            QMessageBox.warning(self, "Télécharger", "Document introuvable (ni local ni Nextcloud).")
+            return
+        shutil.copy(fichier, cible)
+        QMessageBox.information(self, "Télécharger", "Fichier enregistré.")
 
 
 def main():
