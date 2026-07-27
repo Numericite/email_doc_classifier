@@ -24,7 +24,7 @@ CHEMIN_NEXTCLOUD = settings.base_remote_path
 
 # Pipeline v2 : mail → extraction → dossiers Nextcloud candidats (LLM) → base.
 # La décision finale (choix du dossier / création / dépôt) se fait dans l'UI.
-def executer_pipeline(hours=1000):
+def executer_pipeline(hours=2):
     init_db()
 
     emails = EmailClient().filter(hours=hours)
