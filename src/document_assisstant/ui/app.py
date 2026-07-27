@@ -155,6 +155,15 @@ def _pastille_type(type_doc):
     return p
 
 
+# QComboBox qui n'attrape JAMAIS la molette : la page défile normalement au-dessus,
+# et le menu ne change plus de valeur au scroll (même s'il a le focus).
+# La valeur se change au clic / dans la liste déroulante. Le défilement à
+# l'intérieur de la liste ouverte n'est pas affecté (c'est un autre widget).
+class ComboSansScroll(QComboBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class FenetrePrincipale(QMainWindow):
 
     def __init__(self):
@@ -418,7 +427,7 @@ class FenetrePrincipale(QMainWindow):
         # Champ recherchable : liste de TOUS les dossiers Nextcloud extraits, avec la
         # proposition de l'IA pré-sélectionnée. L'utilisateur peut taper pour chercher
         # un autre dossier existant, ou saisir un nouveau nom (créé au moment du dépôt).
-        dest_combo = QComboBox()
+        dest_combo = ComboSansScroll()
         dest_combo.setEditable(True)
         dest_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for dossier in self.dossiers_nextcloud:
@@ -503,7 +512,7 @@ class FenetrePrincipale(QMainWindow):
         # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
         l3 = QHBoxLayout()
 
-        combo = QComboBox()
+        combo = ComboSansScroll()
         for cle, libelle in STATUTS:
             combo.addItem(libelle, userData=cle)
         idx = combo.findData(doc["statut"])
@@ -542,7 +551,7 @@ class FenetrePrincipale(QMainWindow):
     def _bloc_bdc(self, col, bdc, date_mail, doc):
         ligne = QHBoxLayout()
         ligne.addWidget(QLabel("🧾 Projet Ricobot :"))
-        combo_mission = QComboBox()
+        combo_mission = ComboSansScroll()
         for p in self.projets_ricobot:
             combo_mission.addItem(f"{p['nom']} — {p['company']}", userData=p["id"])
         # Pré-sélection : 1re mission proposée par le LLM, si elle existe.
@@ -563,6 +572,8 @@ class FenetrePrincipale(QMainWindow):
             "mission_ids": bdc.get("mission_ids") or [],
             "missions": bdc.get("missions") or [],
             "confidence": bdc.get("confidence"),
+            "order_id": bdc.get("order_id"),        # BDC créé dans Ricobot
+            "order_url": bdc.get("order_url"),      # lien cliquable vers ce BDC
         }
 
         b_edit = QPushButton("✏️")
@@ -570,6 +581,15 @@ class FenetrePrincipale(QMainWindow):
         b_edit.clicked.connect(lambda _=0, d=doc, v=valeurs: self._editer_bdc(d, v))
         ligne.addWidget(b_edit)          # collé au menu
         ligne.addStretch()               # le reste de la largeur pousse à droite
+
+        # Lien cliquable vers le BDC créé dans Ricobot (présent une fois « Remplir BDC » fait).
+        url_bdc = bdc.get("order_url")
+        if url_bdc:
+            lien = QLabel(f'<a href="{url_bdc}">Voir le BDC dans Ricobot ↗</a>')
+            lien.setOpenExternalLinks(True)
+            lien.setStyleSheet(f"color:{BLEU}; font-weight:bold;")
+            ligne.addWidget(lien)
+
         col.addLayout(ligne)
 
         return {"combo_mission": combo_mission, "valeurs": valeurs}
@@ -615,6 +635,8 @@ class FenetrePrincipale(QMainWindow):
             "date_debut": valeurs["date_debut"],
             "end_date": valeurs["date_fin"],
             "confidence": valeurs["confidence"],
+            "order_id": valeurs.get("order_id"),
+            "order_url": valeurs.get("order_url"),
         })
 
     # Bouton « Remplir BDC » : envoie le bon de commande à Ricobot pour la mission
@@ -634,9 +656,24 @@ class FenetrePrincipale(QMainWindow):
                 end_date=v["date_fin"],
             )
             cree_id = (reponse or {}).get("data", {}).get("id")
+            lien = (f"{settings.ricobot_bo_url.rstrip('/')}"
+                    f"/bo/missions/{mission_id}/orders/{cree_id}")
+
+            # Persiste le lien dans le BDC pour qu'il reste affiché après rafraîchissement.
+            maj_bdc_ricobot(doc["id"], {
+                "mission_ids": v["mission_ids"], "missions": v["missions"],
+                "abbreviation": v["titre"], "reference": v["reference"],
+                "date_debut": v["date_debut"], "end_date": v["date_fin"],
+                "confidence": v["confidence"],
+                "order_id": cree_id, "order_url": lien,
+            })
+            v["order_id"], v["order_url"] = cree_id, lien
+
             QMessageBox.information(
                 self, "Remplir BDC",
-                f"Bon de commande créé dans Ricobot (id {cree_id}).")
+                f"Bon de commande créé dans Ricobot (id {cree_id}).\n"
+                "Le lien « Voir le BDC dans Ricobot » apparaît sur la carte.")
+            self.rafraichir()
         except Exception as e:
             QMessageBox.critical(self, "Erreur Ricobot", f"{type(e).__name__}: {e}")
 
