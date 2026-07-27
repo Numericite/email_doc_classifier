@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QScrollArea, QFrame,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit,
-    QFileDialog, QMessageBox, QGraphicsDropShadowEffect,
+    QFileDialog, QMessageBox, QGraphicsDropShadowEffect, QCompleter,
     QDialog, QFormLayout, QDialogButtonBox,
 )
 from PySide6.QtGui import QDesktopServices, QFont, QColor
@@ -18,6 +18,7 @@ from databases.repository import (
     init_db, lister_mails, changer_statut, maj_bdc_ricobot, supprimer_mail,
 )
 from nextcloud.depot import deposer_document, creer_dossier, telecharger_document
+from nextcloud.lister_dossiers import lister_dossiers
 from ricobot.lister_projet_ricot import lister_projets
 from ricobot.remplissage_bdc import remplir_bdc
 
@@ -169,6 +170,16 @@ class FenetrePrincipale(QMainWindow):
         except Exception as e:
             print(f"[!] Missions Ricobot indisponibles : {e}")
             self.projets_ricobot = []
+
+        # Tous les dossiers Nextcloud (< 1 an), chargés une fois : permettent de
+        # rechercher/choisir la destination même si l'IA n'a pas proposé le bon dossier.
+        try:
+            self.dossiers_nextcloud = lister_dossiers(settings.base_remote_path)
+        except Exception as e:
+            print(f"[!] Dossiers Nextcloud indisponibles : {e}")
+            self.dossiers_nextcloud = []
+        # Index nom -> chemin, pour retrouver le dossier choisi dans le champ recherchable.
+        self._dossiers_par_nom = {d["nom"]: d["chemin"] for d in self.dossiers_nextcloud}
 
         # Nom du dossier créé par mail (mail_id -> nom) : mémorisé pour que les
         # documents suivants d'un même mail réutilisent le même dossier sans
@@ -402,22 +413,35 @@ class FenetrePrincipale(QMainWindow):
                     candidats_mail.append(c)
 
         ligne = QHBoxLayout()
-        dest_combo, dest_champ = None, None
+        ligne.addWidget(QLabel("Dossier du mail :"))
+
+        # Champ recherchable : liste de TOUS les dossiers Nextcloud extraits, avec la
+        # proposition de l'IA pré-sélectionnée. L'utilisateur peut taper pour chercher
+        # un autre dossier existant, ou saisir un nouveau nom (créé au moment du dépôt).
+        dest_combo = QComboBox()
+        dest_combo.setEditable(True)
+        dest_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for dossier in self.dossiers_nextcloud:
+            dest_combo.addItem(dossier["nom"], userData=dossier["chemin"])
+        completer = dest_combo.completer()
+        if completer is not None:
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.setFilterMode(Qt.MatchContains)   # cherche "contient", pas "commence par"
+        dest_combo.setMinimumWidth(360)
+
+        # Valeur par défaut : proposition IA (1er candidat), sinon dossier déjà créé
+        # pour ce mail, sinon vide.
         if candidats_mail:
-            ligne.addWidget(QLabel("Dossier du mail :"))
-            dest_combo = QComboBox()
-            for c in candidats_mail:
-                dest_combo.addItem(c["nom"], userData=c["chemin"])
-            ligne.addWidget(dest_combo, stretch=1)
+            idx = dest_combo.findData(candidats_mail[0]["chemin"])
+            if idx >= 0:
+                dest_combo.setCurrentIndex(idx)
+            else:
+                dest_combo.setEditText(candidats_mail[0]["nom"])
         else:
-            ligne.addWidget(QLabel("➕ Dossier à créer :"))
-            # Repré-rempli si un dossier a déjà été créé pour ce mail : d'abord la
-            # mémoire de session, sinon retrouvé en base (persiste après redémarrage).
-            defaut = self._dossier_mail.get(mail["id"]) or self._dossier_cree_du_mail(mail)
-            dest_champ = QLineEdit(defaut)
-            dest_champ.setPlaceholderText(
-                f"Nom du dossier à créer dans « {settings.base_remote_path} »")
-            ligne.addWidget(dest_champ, stretch=1)
+            dest_combo.setEditText(
+                self._dossier_mail.get(mail["id"]) or self._dossier_cree_du_mail(mail))
+
+        ligne.addWidget(dest_combo, stretch=1)
 
         # Score de rattachement du dossier, juste à droite du champ (meilleur score
         # parmi les documents du mail — un mail = un projet).
@@ -426,7 +450,7 @@ class FenetrePrincipale(QMainWindow):
         ligne.addWidget(_pastille_score(max(scores) if scores else None))
         col.addLayout(ligne)
 
-        destination = {"combo": dest_combo, "champ": dest_champ}
+        destination = {"combo": dest_combo}
         for doc in mail["documents"]:
             col.addWidget(self._carte_document(
                 doc, mail.get("objet") or "", mail.get("date_mail"), destination))
@@ -637,21 +661,19 @@ class FenetrePrincipale(QMainWindow):
             return
 
         combo = (destination or {}).get("combo")
-        champ = (destination or {}).get("champ")
-
-        # Pas de dossier trouvé : le nom saisi (création) fait foi.
-        nom_saisi = champ.text().strip() if champ is not None else ""
-        if champ is not None and not nom_saisi:
-            QMessageBox.warning(self, "Classé", "Donne un nom au dossier à créer.")
+        texte = combo.currentText().strip() if combo is not None else ""
+        if not texte:
+            QMessageBox.warning(self, "Classé", "Choisis ou saisis un dossier.")
             return
 
         try:
-            if champ is not None:
-                dossier = creer_dossier(settings.base_remote_path, nom_saisi)
-                # Mémorise le dossier du mail pour les documents suivants.
-                self._dossier_mail[doc["mail_id"]] = nom_saisi
+            # Le texte correspond-il à un dossier Nextcloud existant (par son nom) ?
+            chemin_existant = self._dossiers_par_nom.get(texte)
+            if chemin_existant:
+                dossier = chemin_existant                     # dossier existant choisi
             else:
-                dossier = combo.currentData()  # chemin du dossier choisi
+                dossier = creer_dossier(settings.base_remote_path, texte)  # nouveau dossier
+                self._dossier_mail[doc["mail_id"]] = texte
 
             chemin_distant = deposer_document(chemin_local, dossier)
             changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
