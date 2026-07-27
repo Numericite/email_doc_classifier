@@ -49,6 +49,10 @@ class Settings:
     #ricobot
     ricobot_url = os.getenv("RICOBOT_URL")
     ricobot_token = os.getenv("RICOBOT_API")
+    # URL du back-office Ricobot, pour les liens cliquables vers un BDC créé
+    # (ex. {base}/bo/missions/141/orders/205).
+    
+    ricobot_bo_url = os.getenv("RICOBOT_BO_URL", "https://preprod.ricobot.numericite.eu")
 
     
     #Analyse des document
