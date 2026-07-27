@@ -69,7 +69,7 @@ Extrais les informations suivantes :
 
 - abbreviation
   Une abréviation courte représentant le bon de commande.
-  Si une abréviation existe déjà dans le document, utilise-la.
+  Si une abréviation ou un titre existe déjà dans le document, utilise-la.
   Sinon, génère une abréviation courte et représentative.
 
 - reference
@@ -84,11 +84,6 @@ Extrais les informations suivantes :
   YYYY-MM-DD
 
   Si aucune date n'est trouvée, retourne une chaîne vide.
-
-- amount
-  Le montant total du bon de commande, sous forme de nombre (sans symbole ni
-  espace, le point comme séparateur décimal). Prends le TOTAL du document.
-  Si aucun montant n'est trouvé, retourne 0.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCORE DE CONFIANCE
@@ -126,7 +121,6 @@ Le JSON doit respecter exactement cette structure :
   "abbreviation": "",
   "reference": "",
   "end_date": "",
-  "amount": 0,
   "confidence": 0.0
 }}
 
