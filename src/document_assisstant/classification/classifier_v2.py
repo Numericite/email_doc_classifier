@@ -38,11 +38,9 @@ SCHEMA_RICOBOT = {
         "abbreviation": {"type": "string"},
         "reference": {"type": "string"},
         "end_date": {"type": "string"},
-        "amount": {"type": "number"},
         "confidence": {"type": "number"},
     },
-    "required": ["mission_ids", "abbreviation", "reference", "end_date",
-                 "amount", "confidence"],
+    "required": ["mission_ids", "abbreviation", "reference", "end_date", "confidence"],
     "additionalProperties": False,
 }
 
@@ -113,6 +111,5 @@ class ClassifierV2:
             "abbreviation": data["abbreviation"],
             "reference": data["reference"],
             "end_date": data["end_date"],
-            "amount": data["amount"],
             "confidence": data["confidence"],
         }
