@@ -139,3 +139,21 @@ def changer_statut(document_id, statut, sous_dossier=None, chemin_nextcloud=None
         modifie = cur.rowcount > 0
         conn.commit()
         return modifie
+
+
+# Supprime un mail et TOUS ses documents (ON DELETE CASCADE s'en charge).
+# Utilisé par la corbeille de l'UI pour nettoyer les mails terminés.
+def supprimer_mail(mail_id):
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM mails WHERE id = %s", (mail_id,))
+        conn.commit()
+
+
+# Met à jour le bloc BDC (bdc_ricobot) d'un document après édition dans l'UI.
+def maj_bdc_ricobot(document_id, bdc):
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE documents SET bdc_ricobot = %s WHERE id = %s",
+            (Jsonb(bdc), document_id),
+        )
+        conn.commit()
