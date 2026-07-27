@@ -38,6 +38,15 @@ def deposer_document(chemin_local, dossier_cible):
     return chemin_distant
 
 
+# Récupère (download) le contenu d'un fichier Nextcloud. `chemin_distant` : chemin
+# relatif renvoyé par deposer_document. Sert à l'aperçu / téléchargement quand la
+# copie locale a été supprimée. Renvoie les octets du fichier.
+def telecharger_document(chemin_distant):
+    response = requests.get(_url(chemin_distant), auth=_auth())
+    response.raise_for_status()
+    return response.content
+
+
 # Crée un dossier dans Nextcloud (MKCOL), sous `chemin_parent`.
 def creer_dossier(chemin_parent, nom):
     chemin = f"{chemin_parent.strip('/')}/{nom.strip('/')}"
