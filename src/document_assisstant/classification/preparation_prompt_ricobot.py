@@ -1,6 +1,4 @@
-# Préparation du prompt pour rattacher un BON DE COMMANDE à une mission Ricobot
-# ET extraire les champs du BDC. Ce fichier ne fait AUCUN appel LLM : il construit
-# le texte du prompt. Les missions sont un tableau JSON (id, project, company).
+# Prompt du bon de commande : rattachement à une mission Ricobot + extraction des champs.
 
 
 def construire_prompt_ricobot(objet_mail, texte_document, texte_missions):

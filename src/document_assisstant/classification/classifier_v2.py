@@ -10,14 +10,13 @@ from classification.preparation_prompt_dossier import (
 from classification.preparation_prompt_ricobot import construire_prompt_ricobot
 from ricobot.lister_projet_ricot import formater_projets_pour_prompt
 
-# Schéma structuré : le LLM renvoie la LISTE des index de dossiers qui conviennent
-# (vide si aucun, plusieurs en cas d'ambiguïté) + un score.
-# output_config garantit une réponse JSON valide et conforme à ce schéma.
+# Types de document autorisés (le LLM doit en choisir un).
 TYPES_DOCUMENT = [
     "facture", "devis", "contrat", "avenant", "bon_de_commande",
     "document_administratif", "autre",
 ]
 
+# Sortie garantie de l'analyse : index des dossiers retenus + type + score.
 SCHEMA_DOSSIER = {
     "type": "object",
     "properties": {
@@ -29,8 +28,7 @@ SCHEMA_DOSSIER = {
     "additionalProperties": False,
 }
 
-# Schéma de l'appel Ricobot (bons de commande) : mission(s) rattachée(s) +
-# champs extraits du BDC. mission_ids contient les ID RÉELS Ricobot.
+# Sortie garantie pour un bon de commande : mission(s) Ricobot + champs du BDC.
 SCHEMA_RICOBOT = {
     "type": "object",
     "properties": {
@@ -51,12 +49,7 @@ class ClassifierV2:
         self.client = anthropic.Anthropic(api_key=settings.claude_api_key)
         self.model = settings.claude_model
 
-    # Retrouve le(s) DOSSIER(S) Nextcloud de destination parmi une liste.
-    # Un SEUL appel Anthropic. Le LLM renvoie la liste des index qui conviennent :
-    #   - liste vide  → aucun dossier pertinent (proposer d'en créer un)
-    #   - un seul     → on le propose
-    #   - plusieurs   → ambiguïté, l'utilisateur choisira
-    # Renvoie un dict : {dossier_ids, dossiers, score_confiance}.
+    # Un seul appel : type du document + dossier(s) Nextcloud retenus (index) + score.
     def classer_dossier(self, objet_mail, texte_document, dossiers):
         texte_dossiers = formater_dossiers_pour_prompt(dossiers)
         prompt = construire_prompt_dossier(objet_mail, texte_document, texte_dossiers)
@@ -71,7 +64,7 @@ class ClassifierV2:
         contenu = next(b.text for b in response.content if b.type == "text")
         data = json.loads(contenu)
 
-        # On ne garde que les index valides, et on retrouve les dossiers complets.
+        # Garde-fou : on ne garde que les index valides, et on résout les dossiers.
         dossier_ids = [i for i in data["dossier_ids"] if 0 <= i < len(dossiers)]
         dossiers_proposes = [dossiers[i] for i in dossier_ids]
 
@@ -82,9 +75,7 @@ class ClassifierV2:
             "score_confiance": data["score_confiance"],
         }
 
-    # Rattache un BON DE COMMANDE à une mission Ricobot ET extrait ses champs,
-    # en UN SEUL appel Anthropic. `projets` : liste {id, nom, company} (Ricobot).
-    # Renvoie : {mission_ids, missions, abbreviation, reference, end_date, confidence}.
+    # Un seul appel : mission(s) Ricobot rattachée(s) + champs extraits du bon de commande.
     def classer_ricobot(self, objet_mail, texte_document, projets, dossier_valide=""):
         texte_missions = formater_projets_pour_prompt(projets)
         prompt = construire_prompt_ricobot(objet_mail, texte_document, texte_missions)
@@ -99,8 +90,7 @@ class ClassifierV2:
         contenu = next(b.text for b in response.content if b.type == "text")
         data = json.loads(contenu)
 
-        # Le LLM renvoie des ID Ricobot réels : on ne garde que ceux qui existent
-        # vraiment dans la liste (garde-fou contre un ID inventé).
+        # Garde-fou : on ne garde que les ID de mission qui existent vraiment.
         par_id = {p["id"]: p for p in projets}
         mission_ids = [i for i in data["mission_ids"] if i in par_id]
         missions_proposees = [par_id[i] for i in mission_ids]

@@ -1,16 +1,12 @@
-# Préparation du prompt pour retrouver le DOSSIER Nextcloud de destination.
-# Ce fichier ne fait AUCUN appel LLM : il met en forme la liste des dossiers et
-# construit le texte du prompt. Le LLM renvoie l'INDEX du dossier ([i] de la liste),
-# pas son nom : c'est plus court (moins de tokens) et sans ambiguïté.
+# Prépare le prompt du choix de dossier (aucun appel LLM ici).
 
 
+# Formate la liste des dossiers, chacun préfixé par son index [i].
 def formater_dossiers_pour_prompt(dossiers):
     return "\n".join(f"[{i}] {d['nom']}" for i, d in enumerate(dossiers))
 
 
-# Construit le prompt complet envoyé au LLM.
-# On lui donne l'objet du mail, le texte du document et la liste des dossiers,
-# et il renvoie l'index du dossier de destination le plus pertinent (ou -1).
+# Assemble le prompt : objet du mail + texte + dossiers → le LLM renvoie les index retenus.
 def construire_prompt_dossier(objet_mail, texte_document, texte_dossiers):
     return (
         "Tu es un assistant de gestion documentaire de l'entreprise Numéricité.\n"
