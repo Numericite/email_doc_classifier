@@ -2,173 +2,118 @@
 
 ## Présentation
 
-Application locale destinée au pôle administratif afin d'assister le traitement et le classement des documents.
+Application locale destinée au pôle administratif pour **assister** le traitement et le
+classement des documents reçus par e-mail.
 
-L'application ne classe jamais automatiquement les documents. Chaque proposition doit être validée par un utilisateur avant toute sauvegarde dans Nextcloud.
-
-L'objectif est d'automatiser les tâches répétitives tout en conservant un contrôle humain sur chaque décision.
-
----
-
-# Objectifs
-
-- Surveiller une boîte mail Exchange.
-- Détecter les nouveaux e-mails contenant des pièces jointes.
-- Identifier le type de document reçu.
-- Extraire le contenu du document selon son format.
-- Récupérer les projets actifs depuis Notion.
-- Analyser le document à l'aide d'un LLM.
-- Proposer le projet et le dossier Nextcloud les plus pertinents.
-- Permettre à un utilisateur de valider ou de refuser la proposition.
-- Classer le document dans Nextcloud après validation.
+L'application ne classe **jamais** automatiquement. Chaque proposition est validée par un
+utilisateur avant tout dépôt dans Nextcloud. L'objectif : automatiser le travail répétitif
+tout en gardant un contrôle humain sur chaque décision.
 
 ---
 
-# Flux de traitement
+## Ce que fait l'application
 
-1. Surveillance de la boîte mail Exchange.
-2. Détection d'un nouvel e-mail avec pièce jointe.
-3. Détection du type de fichier.
-4. Routage vers le pipeline d'extraction adapté.
-5. Extraction locale du texte.
-6. Récupération des projets actifs depuis Notion.
-7. Analyse du document par le LLM.
-8. Affichage de l'analyse dans l'interface.
-9. Validation ou refus par l'utilisateur.
-10. Si validation :
-   - Envoi du document vers Nextcloud via l'API.
-11. Si refus :
-   - L'utilisateur télécharge le document.
-   - Il le modifie (signature, correction, etc.).
-   - Il le renvoie par e-mail.
-   - Une nouvelle analyse est effectuée.
+- Surveille une boîte mail **Exchange** et détecte les e-mails avec pièce jointe.
+- Extrait le texte de chaque document (PDF, DOCX).
+- Analyse le document avec un **LLM** et propose :
+  - le **type** de document ;
+  - le **dossier Nextcloud** le plus pertinent (parmi les dossiers existants) ;
+  - un **score de confiance**.
+- Cas particulier — **bon de commande** : propose aussi la **mission Ricobot** correspondante
+  et pré-remplit les champs du bon de commande.
+- Présente chaque proposition dans une interface où l'utilisateur **valide, corrige ou refuse**.
+- Après validation : dépose le document dans Nextcloud (et/ou crée le bon de commande dans
+  Ricobot).
 
 ---
 
-# Formats de documents pris en charge
+## Flux de traitement
 
-- PDF texte
-- PDF scanné
-- Images
-- DOCX
-- Autres formats pris en charge
-
----
-
-# Traitement des documents
-
-### PDF texte
-
-- Extraction locale du texte
-- PyMuPDF ou pdfplumber
-
-### PDF scanné
-
-- OCR local
-- Tesseract ou PaddleOCR
-
-### Images
-
-- OCR local
-- Tesseract ou PaddleOCR
-
-### DOCX
-
-- Extraction du texte et des tableaux
-- python-docx
-
-Aucun document brut n'est envoyé directement au LLM.
+1. Réception d'un e-mail Exchange avec pièce jointe.
+2. Sauvegarde locale de la pièce jointe.
+3. Extraction du texte du document.
+4. Récupération des dossiers Nextcloud existants.
+5. Analyse par le LLM → type, dossier proposé, score (+ mission Ricobot pour un bon de commande).
+6. Affichage de la proposition dans l'interface.
+7. Décision de l'utilisateur :
+   - **Classer** → dépôt dans le dossier Nextcloud choisi (créé à la volée si besoin).
+   - **Remplir BDC** (bon de commande) → création dans Ricobot + lien vers le bon de commande.
+   - **À signer / À renvoyer** → le document reste en attente d'une action.
 
 ---
 
-# Analyse par le LLM
+## Formats pris en charge
 
-Un seul appel est effectué.
+| Format | Traitement |
+|---|---|
+| PDF texte | Extraction du texte |
+| PDF scanné | OCR |
+| Images | OCR |
+| DOCX | Extraction du texte et des tableaux |
 
-### Entrée
-
-- Texte extrait du document
-- Liste des projets actifs provenant de Notion
-
-### Sortie (JSON)
-
-- Type de document
-- Informations extraites
-- Client
-- Contact
-- Référence
-- Date
-- Résumé
-- Projet proposé
-- Score de confiance
-- Dossier Nextcloud proposé
+L'extraction est locale. **Aucun document brut n'est envoyé au LLM** : seul le texte extrait
+l'est (confidentialité et coût). Le texte est plafonné (5 pages, 20 000 caractères).
 
 ---
 
-# Interface utilisateur
+## Analyse par le LLM
 
-L'application affiche :
+Un seul appel par document (deux pour un bon de commande). La réponse est un **JSON garanti
+valide** (le type est toujours dans la liste autorisée).
 
-- Les nouveaux documents reçus
-- Un aperçu du document
-- Les informations extraites
-- Le projet proposé
-- Le score de confiance
-- Le dossier proposé
-- L'état de validation
+**Entrée** : objet de l'e-mail + texte extrait + liste des dossiers Nextcloud (ou des missions
+Ricobot pour un bon de commande).
 
-Actions disponibles :
-
-- Valider
-- Refuser
-- Télécharger le document
+**Sortie** :
+- Type de document : `facture`, `devis`, `contrat`, `avenant`, `bon_de_commande`,
+  `document_administratif`, `autre`.
+- Dossier Nextcloud proposé (choisi *dans la liste* ; « aucun » si rien ne correspond).
+- Score de confiance (0 à 1).
+- Pour un bon de commande : mission Ricobot + champs (titre, référence, dates).
 
 ---
 
-# Hors périmètre (V1)
+## Interface
 
-- Classement automatique sans validation
-- Envoi automatique dans Nextcloud
-- Base vectorielle (RAG)
-- Base de données vectorielle
-- LLM Vision
-- Multi-utilisateur
-- Déploiement Cloud
+Application de bureau, organisée **par e-mail reçu**. Pour chaque e-mail : expéditeur, objet,
+date, et la liste de ses documents.
 
----
+Pour chaque document :
+- nom du fichier et **type** ;
+- **dossier proposé** (champ recherchable parmi tous les dossiers Nextcloud, ou saisie d'un
+  nouveau nom → créé au dépôt) ;
+- **score de confiance** ;
+- **statut** modifiable.
 
-# Technologies
+**Statuts** : En attente · À signer · À renvoyer · Classé.
 
-## Backend
-
-- Python
-
-## Services externes
-
-- Exchange
-- API Notion
-- API Nextcloud
-
-## Extraction de documents
-
-- PyMuPDF
-- pdfplumber
-- python-docx
-
-## OCR
-
-- Tesseract
-- PaddleOCR
-
-## LLM
-
-- Modèle API anthropic
-
+**Actions** : Aperçu · Télécharger · Classer (dépôt Nextcloud) · Remplir BDC (Ricobot) ·
+recherche · filtre par statut · suppression d'un mail.
 
 ---
 
-# Principe fondamental
+## Hors périmètre
 
-L'application est un **assistant de gestion documentaire**.
+- Classement automatique sans validation.
+- Base vectorielle / RAG.
+- LLM Vision.
+- Multi-utilisateur.
+- Déploiement cloud.
 
-Elle analyse les documents, propose un classement et fournit les informations utiles, mais **la décision finale appartient toujours à l'utilisateur**.
+---
+
+## Technologies
+
+- **Python** (backend).
+- **Exchange** (mail), **Nextcloud** (dépôt), **Ricobot** (bons de commande).
+- **Docling** + **RapidOCR** (extraction et OCR).
+- **API Anthropic (Claude)** — sortie JSON garantie.
+- **PostgreSQL** (données de l'application), accès en SQL direct via **psycopg**.
+- **PySide6** (interface de bureau).
+
+---
+
+## Principe fondamental
+
+L'application est un **assistant**. Elle analyse, propose un classement et fournit les
+informations utiles, mais **la décision finale appartient toujours à l'utilisateur**.

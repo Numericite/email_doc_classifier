@@ -1,247 +1,166 @@
-# Architecture technique — V1
+# Architecture technique
 
 ## Objet du document
 
-Ce document décrit l'architecture technique de la **V1** de l'assistant intelligent
-de gestion documentaire défini dans [`product.md`](./product.md).
-
-Il ne contient aucun code. Il décrit :
-
-- le rôle de chaque dossier ;
-- le flux complet de traitement d'un document ;
-- les interactions entre les modules ;
-- les technologies utilisées ;
-- les principes d'architecture.
-
-L'architecture s'appuie sur la **structure de dossiers actuelle** du projet, sans en
-modifier l'organisation.
+Décrit l'architecture technique de l'assistant de gestion documentaire défini dans
+[`product.md`](./product.md) : le rôle de chaque module, le flux de traitement, les
+technologies et les principes.
 
 ```
-src/
-├── classification/
-├── config/
-├── ui/
-├── databases/
-├── emails/
-├── extraction/
-├── notion/
-├── nextcloud/
-├── utils/
-└── vision/
+src/document_assisstant/
+├── config/          configuration (.env)
+├── emails/          boîte mail Exchange + pièces jointes
+├── extraction/      extraction du texte (Docling)
+├── nextcloud/       dossiers Nextcloud : lister / déposer / créer / télécharger
+├── ricobot/         missions + bons de commande
+├── classification/  prompts + appels au LLM
+├── databases/       PostgreSQL (schéma + accès, psycopg)
+├── orchestration/   le pipeline (chef d'orchestre)
+├── ui/              interface de bureau (PySide6)
+└── utils/           fonctions transverses
 ```
+
+> **Legacy (non utilisé)** : `notion/`, `vision/`, `classification/classifier.py`,
+> `orchestration/pipeline.py`. La version actuelle rattache les documents à des **dossiers
+> Nextcloud** (et non à des projets Notion).
 
 ---
 
 ## 1. Vue d'ensemble
 
-L'application est un **assistant local** de gestion documentaire. Elle surveille une
-boîte mail, extrait et analyse les documents reçus, puis **propose** un classement dans
-Nextcloud.
+L'application est un **assistant local**. Elle surveille une boîte mail, analyse les documents
+reçus, et **propose** un classement dans Nextcloud (et un rattachement Ricobot pour les bons
+de commande). **Aucun classement automatique** : chaque proposition est validée par un humain.
 
-Principe fondateur (voir `product.md`) : **aucun classement automatique**. Chaque
-proposition est présentée à un utilisateur, qui **valide** ou **refuse** avant toute
-écriture dans Nextcloud. La décision finale appartient toujours à l'utilisateur.
+Elle se décompose en deux temps :
 
-L'application est découpée en **modules à responsabilité unique**, chacun logé dans son
-propre dossier et communiquant par des données simples (chemins de fichiers, texte
-extrait, dictionnaires d'informations).
+- **Le pipeline** (`orchestration/`) : automatique. Il lit les mails, analyse, et enregistre
+  une proposition en base. Il n'écrit rien dans Nextcloud/Ricobot.
+- **L'interface** (`ui/`) : humaine. Elle lit la base, l'utilisateur valide/corrige, et c'est
+  seulement là que le dépôt réel a lieu.
+
+Les modules ont une **responsabilité unique** et communiquent par des données simples
+(chemins, texte, dictionnaires).
 
 ---
 
-## 2. Rôle de chaque dossier
+## 2. Rôle de chaque module
 
 ### `config/`
-Configuration centralisée de l'application.
-- Charge les variables d'environnement (identifiants Exchange, clés d'API Notion,
-  Nextcloud, Anthropic).
-- Définit les chemins de travail (dossier temporaire des pièces jointes, journaux).
-- Regroupe les paramètres et les seuils de traitement.
-
-Tous les autres modules lisent leurs paramètres ici ; aucune valeur sensible n'est
-codée en dur ailleurs.
+Configuration centralisée : charge le `.env` (identifiants Exchange, Nextcloud, Ricobot, clé
+Anthropic, `DATABASE_URL`), chemins de travail et seuils. Aucun secret codé en dur ailleurs.
 
 ### `emails/`
-Connexion à la messagerie **Exchange** et point d'entrée du flux.
-- Se connecte à la boîte mail et filtre les nouveaux e-mails porteurs de pièces jointes.
-- Extrait les pièces jointes et les sauvegarde dans le dossier temporaire.
-- Restitue les métadonnées de chaque e-mail (expéditeur, sujet, date, corps) et la liste
-  des fichiers sauvegardés.
-
-C'est la **source** des documents à traiter.
+Connexion **Exchange** et point d'entrée du flux. Filtre les nouveaux e-mails porteurs de
+pièces jointes, sauvegarde les fichiers dans le dossier temporaire, et restitue les
+métadonnées (expéditeur, sujet, date, `message_id`) + la liste des fichiers.
 
 ### `extraction/`
-Cœur de l'**extraction de contenu** local, unifié autour de **Docling**. Convertit un
-fichier (PDF texte, PDF scanné, image, DOCX) en texte structuré exploitable :
-- détecte automatiquement, page par page, le texte natif et les pages scannées ;
-- déclenche l'**OCR** en interne pour les pages scannées et les images
-  (moteur **RapidOCR**) ;
-- reconstruit la **structure du document** (titres, ordre de lecture, **tableaux**) ;
-- produit une sortie **structurée** (Markdown / texte) prête pour l'analyse.
-
-Docling constitue un **point d'entrée unique** pour tous les formats de la V1 et remplace
-l'assemblage manuel « détection de page + extraction native + OCR ». L'interface exposée
-au reste de l'application reste stable : un document en entrée, un **texte unique** en
-sortie.
-
-Conformément au produit : **aucun document brut n'est envoyé au LLM**, seul le texte
-extrait localement l'est. Cette extraction propre et compacte réduit aussi le volume
-transmis au LLM, donc son **coût**.
-
-### `vision/`
-Traitement optionnel des **images** par modèle de vision, réservé aux cas que l'OCR ne
-couvre pas (ex. *décrire* un logo ou une signature plutôt que retranscrire du texte).
-L'OCR courant des pages scannées et des images est assuré par Docling dans
-`extraction/` ; `vision/` n'intervient qu'en complément ciblé.
-
-### `notion/`
-Intégration de l'**API Notion**. Récupère la liste des **projets actifs**, qui sert de
-référentiel au LLM pour proposer le projet le plus pertinent.
-
-### `classification/`
-Orchestration de l'**analyse par le LLM**.
-- Envoie au LLM le **texte extrait** et la **liste des projets actifs** issue de Notion.
-- Réalise **un seul appel** LLM par document.
-- Récupère une sortie **structurée en JSON** : type de document, informations extraites
-  (client, contact, référence, date), résumé, projet proposé, score de confiance et
-  dossier Nextcloud proposé.
-
-C'est le module qui transforme un texte brut en **proposition de classement**.
+Extraction de contenu locale, unifiée autour de **Docling** (PDF texte et scanné, images,
+DOCX, tableaux) avec **RapidOCR** comme moteur OCR interne. Produit un **texte unique**
+(Markdown) plafonné. Aucun document brut n'est transmis au LLM.
 
 ### `nextcloud/`
-Intégration de l'**API Nextcloud**. Dépose le document dans le dossier proposé,
-**uniquement après validation humaine**. Ce module n'écrit jamais de manière autonome.
+Intégration **Nextcloud** (WebDAV) : lister les dossiers existants (candidats de classement),
+déposer un document, créer un dossier, télécharger un fichier. N'écrit qu'après validation.
 
-### `email_doc_classifier/`
-Module **uniquement orchestrateur** du flux. Il assemble le pipeline de bout en bout et
-coordonne les autres modules, **sans contenir aucune logique métier** : il ne réalise
-lui-même ni extraction, ni OCR, ni classification, ni appel à Notion, ni dépôt
-Nextcloud. Toute cette logique reste dans les modules dédiés (`extraction/`, `vision/`,
-`classification/`, `notion/`, `nextcloud/`) ; ce module ne fait que les appeler.
+### `ricobot/`
+Intégration **Ricobot** : lister les missions, créer un bon de commande. Utilisé uniquement
+pour les documents de type bon de commande.
 
-Ses responsabilités se limitent à :
-- **coordonner** les différents modules ;
-- **exécuter les étapes du pipeline dans le bon ordre** (surveillance mail → extraction →
-  récupération des projets → analyse → proposition → dépôt après validation) ;
-- **transmettre les données** entre les modules (fichiers, texte extrait, projets actifs,
-  proposition structurée) ;
-- **gérer les erreurs** et **décider de poursuivre ou d'interrompre** le traitement d'un
-  document.
+### `classification/`
+Orchestration de l'**analyse par le LLM** (`classifier_v2`). Construit le prompt (objet du
+mail + texte extrait + liste des dossiers), fait **un seul appel** Claude et récupère une
+sortie **structurée en JSON** : type, dossier(s) proposé(s), score. Pour un bon de commande,
+un second appel trouve la mission Ricobot et extrait les champs du BDC.
 
-C'est le **chef d'orchestre** du flux : il enchaîne les étapes et fait circuler les
-données, mais délègue tout le travail métier aux modules spécialisés.
+### `databases/`
+Données de l'application dans **PostgreSQL**, en **SQL direct via psycopg** (sans ORM). Tout le
+SQL est isolé dans `repository.py` (**repository pattern**) : le pipeline et l'UI n'appellent
+que des fonctions.
+
+### `orchestration/`
+**Uniquement orchestrateur** (`pipeline_v2.py`) : enchaîne les étapes dans le bon ordre et fait
+circuler les données, **sans logique métier**. Gère les erreurs (un document en échec est sauté).
+
+### `ui/`
+Interface de bureau (**PySide6**). Lit la base (`lister_mails`), affiche les propositions, et
+déclenche les actions (dépôt Nextcloud, remplissage BDC Ricobot, changement de statut). Ne
+connaît que les fonctions du `repository` — jamais de SQL.
 
 ### `utils/`
-Fonctions transverses partagées (sérialisation des dates et des objets, helpers). Sans
-dépendance métier, réutilisables par tous les modules.
+Fonctions transverses (sérialisation des dates, helpers), sans dépendance métier.
 
 ---
 
-## 3. Flux complet de traitement d'un document
-
-Orchestré par `email_doc_classifier/`, le flux reprend celui de `product.md` :
-
-1. **Surveillance de la boîte mail** — `emails/` interroge Exchange.
-2. **Détection d'un nouvel e-mail avec pièce jointe** — sauvegarde des pièces jointes
-   dans le dossier temporaire défini par `config/`.
-3. **Extraction du contenu** — `extraction/` passe le fichier (PDF texte, PDF scanné,
-   image, DOCX) dans **Docling**, qui détecte automatiquement texte natif vs pages
-   scannées, applique l'**OCR** (RapidOCR) quand nécessaire et reconstruit la structure,
-   **tableaux compris**.
-4. **Production d'un texte unique** — `extraction/` produit une sortie structurée
-   (Markdown / texte) prête pour l'analyse. `vision/` n'intervient qu'en complément
-   ciblé (ex. description d'un logo / d'une signature).
-5. **Récupération des projets actifs** — `notion/` fournit la liste des projets en cours.
-6. **Analyse par le LLM** — `classification/` envoie *texte extrait + projets actifs* et
-   reçoit une réponse **JSON** (type, informations, client, contact, référence, date,
-   résumé, projet proposé, score de confiance, dossier Nextcloud proposé).
-7. **Affichage de l'analyse** — la proposition est présentée à l'utilisateur.
-8. **Décision humaine** — l'utilisateur **valide** ou **refuse**.
-9. **Si validation** — `nextcloud/` dépose le document dans le dossier proposé.
-10. **Si refus** — l'utilisateur télécharge le document, le corrige (signature,
-    correction…) et le renvoie par e-mail : un **nouveau cycle** démarre à l'étape 1.
-
-Un seul appel LLM est effectué par document.
-
----
-
-## 4. Interactions entre les modules
-
-Les dépendances sont **orientées** (sens unique), ce qui limite le couplage :
+## 3. Flux complet
 
 ```
-config/  ← lu par tous les modules (paramètres, chemins, secrets)
-utils/   ← utilitaires transverses, sans dépendance métier
-
-                     ┌───────────────── email_doc_classifier/ (orchestration) ─────────────────┐
-                     │                                                                          │
-                     ▼                                                                          ▼
-emails/  ──►  extraction/  ──►  classification/  ──►  (proposition)  ──►  (validation)  ──►  nextcloud/
-                   │                  ▲
-               vision/            notion/
+[1] emails/        Exchange → mails avec pièce jointe → fichiers dans data/inbox_temp/
+[2] extraction/    Docling → texte
+[3] nextcloud/     liste des dossiers existants
+[4] classification/ Claude → type + dossier(s) + score (+ mission Ricobot si BDC)
+[5] databases/     enregistrement en PostgreSQL
+        │
+        ▼
+    ui/            l'humain valide → dépôt Nextcloud / création BDC Ricobot
 ```
 
-Règles d'interaction :
-
-- **`config/` et `utils/`** sont des dépendances de bas niveau : tous les modules
-  peuvent les utiliser, eux ne dépendent de personne.
-- **`email_doc_classifier/`** est le seul module qui connaît l'ensemble du flux ; il
-  appelle les autres dans l'ordre et ne porte pas de logique métier propre.
-- **`emails/`** ne connaît que la messagerie et le dossier temporaire ; il **produit**
-  des fichiers et des métadonnées.
-- **`extraction/`** ne connaît que les fichiers ; il **produit** du texte et peut
-  s'appuyer sur `vision/` pour les images.
-- **`notion/`** fournit un référentiel de projets, indépendamment du reste.
-- **`classification/`** **consomme** le texte de `extraction/` et les projets de
-  `notion/`, appelle le LLM et **produit** une proposition structurée.
-- **`nextcloud/`** n'écrit **jamais** sans un ordre explicite issu de la validation.
-
-Les échanges se font par **données simples** (chemins, texte, dictionnaires), ce qui
-permet de tester et de remplacer chaque module indépendamment.
+Un seul appel LLM par document (deux pour un bon de commande).
 
 ---
 
-## 5. Technologies utilisées
+## 4. Interactions entre modules
 
-### Langage & socle
-- **Python** (backend).
-- Configuration par variables d'environnement, chargées dans `config/`.
+Dépendances **orientées** (sens unique), pour limiter le couplage :
 
-### Services externes
-- **Exchange** — surveillance de la boîte mail.
-- **API Notion** — récupération des projets actifs.
-- **API Nextcloud** — dépôt des documents validés.
+```
+config/  ← lu par tous les modules
+utils/   ← utilitaires transverses
 
-### Extraction de documents
-- **Docling** — moteur d'extraction unifié pour PDF (texte et scanné), images et DOCX :
-  analyse de mise en page, reconstruction des **tableaux** et sortie structurée
-  (Markdown / texte).
+           ┌──────── orchestration/ (pipeline) ────────┐
+           ▼                                            ▼
+emails/ ─► extraction/ ─► classification/ ─► databases/ ◄─► ui/ ─► nextcloud/ + ricobot/
+                              ▲                                (au moment de la validation)
+                     nextcloud/ (liste) + ricobot/ (missions)
+```
 
-### OCR
-- **RapidOCR** — moteur d'OCR utilisé **par Docling** pour les pages scannées et les
-  images (aucune installation de Tesseract / PaddleOCR requise).
-
-### LLM
-- **Modèle via l'API Anthropic (Claude)** — analyse structurée du document, sortie JSON.
+- `config/` et `utils/` : dépendances de bas niveau.
+- `orchestration/` connaît tout le flux ; il appelle les autres et ne porte pas de logique métier.
+- `databases/` est le point de passage entre le pipeline (écriture) et l'UI (lecture + statuts).
+- `nextcloud/` et `ricobot/` n'écrivent **jamais** sans une action explicite de l'UI (validation).
 
 ---
 
-## 6. Principes d'architecture
+## 5. Technologies
 
-- **Modularité** — chaque étape du flux vit dans son propre dossier, avec une frontière
-  claire.
-- **Responsabilité unique** — un module fait une seule chose : `emails/` récupère,
-  `extraction/` extrait, `classification/` analyse, `nextcloud/` dépose,
-  `email_doc_classifier/` orchestre.
-- **Validation humaine obligatoire** — le classement n'est jamais automatique ; le dépôt
-  Nextcloud est conditionné à une action explicite de l'utilisateur.
-- **Traitement local et confidentialité** — l'extraction et l'OCR sont réalisés en
-  local ; **seul le texte extrait** est transmis au LLM, jamais le document brut.
-- **Un seul appel LLM par document** — pour la simplicité, la maîtrise des coûts et la
-  prévisibilité.
-- **Configuration centralisée** — secrets et paramètres isolés dans `config/`.
-- **Couplage faible / dépendances orientées** — les modules communiquent par données
-  simples et suivent un sens unique (source → extraction → analyse → décision → dépôt),
-  ce qui rend chaque brique testable et remplaçable.
-- **Périmètre V1 maîtrisé** — hors périmètre : classement automatique, envoi automatique,
-  base vectorielle / RAG, LLM Vision, multi-utilisateur, déploiement Cloud
-  (voir `product.md`).
+- **Python**, configuration par `.env` (`config/`).
+- **Exchange** (mail), **Nextcloud** WebDAV (dépôt), **Ricobot** (bons de commande).
+- **Docling** (extraction) + **RapidOCR** (OCR).
+- **API Anthropic (Claude)** — analyse structurée, sortie JSON.
+- **PostgreSQL** + **psycopg** (SQL direct). En développement, PostgreSQL tourne dans **Docker**.
+- **PySide6** (Qt) pour l'interface.
+
+---
+
+## 6. Modèle de données (PostgreSQL)
+
+Deux tables, relation un-à-plusieurs (`ON DELETE CASCADE`) :
+
+- **`mails`** : `message_id` (unique, anti-doublon), `expediteur`, `expediteur_nom`, `objet`,
+  `date_mail`, `date_analyse`.
+- **`documents`** : `mail_id`, `nom_fichier`, `chemin_local`, `type_document`,
+  `dossiers_candidats` (JSON), `bdc_ricobot` (JSON, bons de commande), `score_confiance`,
+  `statut`, `chemin_nextcloud`, `date_decision`.
+
+---
+
+## 7. Principes d'architecture
+
+- **Responsabilité unique** par module ; couplage faible, dépendances orientées.
+- **Validation humaine obligatoire** : aucun dépôt sans action explicite dans l'UI.
+- **Traitement local** : extraction et OCR en local ; seul le texte extrait est transmis au LLM.
+- **Un seul appel LLM par document** (deux pour un BDC) ; texte plafonné pour maîtriser le coût.
+- **Repository pattern** : tout le SQL isolé dans `databases/` → base remplaçable sans toucher
+  au reste (SQLite → PostgreSQL a été fait ainsi).
+- **PostgreSQL = source de vérité** ; les fichiers durables vivent dans **Nextcloud**.
