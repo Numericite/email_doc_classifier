@@ -1,4 +1,9 @@
 .env
+.env.docker
+config.ini
+build/
+dist/
+*.spec.bak
 .venv/
 docs/
 data/

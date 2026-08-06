@@ -1,5 +1,6 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:                 # None en mode fenêtré (exe) : ne pas planter
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
@@ -10,13 +11,10 @@ import requests
 
 from config.settings import settings
 
-# Espace de noms WebDAV (toutes les balises sont préfixées par {DAV:} dans la réponse).
+# Espace de noms WebDAV (les balises de la réponse sont préfixées par {DAV:}).
 DAV = "{DAV:}"
 
-# Préfixe WebDAV du serveur (ex. "remote.php/webdav"). Les href renvoyés par
-# PROPFIND sont absolus depuis la racine du serveur et le contiennent : on le
-# retire pour obtenir un chemin relatif à la racine WebDAV, réutilisable tel quel
-# par nextcloud/depot.py (qui rajoute la base de son côté).
+# Préfixe WebDAV du serveur, retiré des href pour obtenir un chemin relatif.
 _BASE_PATH = urlparse(settings.nextcloud_url).path.strip("/")
 
 # Corps PROPFIND : on ne demande que le type (dossier/fichier) et la date de modif.
@@ -54,8 +52,7 @@ def lister_dossiers(chemin, max_age_jours=365):
         if rtype is None or rtype.find(f"{DAV}collection") is None:
             continue
 
-        # href = chemin absolu depuis la racine du serveur : on retire le préfixe
-        # WebDAV pour obtenir un chemin relatif (ex. "2 - Projets/EGOV - ...").
+        # href absolu → chemin relatif (on retire le préfixe WebDAV).
         chemin_dossier = unquote(rep.find(f"{DAV}href").text).strip("/")
         if _BASE_PATH and chemin_dossier.startswith(_BASE_PATH):
             chemin_dossier = chemin_dossier[len(_BASE_PATH):].strip("/")

@@ -1,5 +1,6 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:                 # None en mode fenêtré (exe) : ne pas planter
+    sys.stdout.reconfigure(encoding="utf-8")
 
 import re
 import json
@@ -79,20 +80,16 @@ def lister_projets():
     return projets
 
 
-# Retire TOUS les emojis / symboles, quelle que soit leur plage, en se basant sur
-# les catégories Unicode (générique, pas une liste de plages) :
-#   So = symbole (emoji, pictogramme…)   Sk = modificateur (teintes de peau…)
-#   Cf = format (zero-width joiner…)     FE00–FE0F = variation selectors
-# Ça consomme beaucoup de tokens pour zéro info utile au matching.
+# Retire les emojis/symboles (inutiles au matching, coûteux en tokens).
 def _sans_emoji(texte):
     garde = []
     for c in texte:
-        if unicodedata.category(c) in ("So", "Sk", "Cf"):
+        if unicodedata.category(c) in ("So", "Sk", "Cf"):   # symboles / modificateurs / format
             continue
-        if 0xFE00 <= ord(c) <= 0xFE0F:       # variation selectors
+        if 0xFE00 <= ord(c) <= 0xFE0F:                       # variation selectors
             continue
         garde.append(c)
-    texte = "".join(garde).lstrip(" -–—•")   # séparateur orphelin laissé en tête
+    texte = "".join(garde).lstrip(" -–—•")                   # sépare un séparateur orphelin en tête
     return re.sub(r"\s+", " ", texte).strip()
 
 

@@ -1,61 +1,80 @@
 import os
-from dotenv import load_dotenv
+import sys
+import configparser
 from pathlib import Path
 
+from dotenv import load_dotenv
 
 
-load_dotenv()
+# Dossier de base : à côté de l'exe (appli compilée) ou racine du projet (dev).
+def _base_dir():
+    if getattr(sys, "frozen", False):               # lancé depuis un .exe PyInstaller
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[3]      # .../config/settings.py -> racine projet
+
+
+BASE_DIR = _base_dir()
+
+# .env (dev / serveur) : source par défaut des paramètres.
+load_dotenv(BASE_DIR / ".env")
+
+# config.ini (poste utilisateur) : posé à côté de l'exe, éditable sans recompiler.
+_ini = configparser.ConfigParser()
+_ini.read(BASE_DIR / "config.ini", encoding="utf-8")
+
+
+# Valeur = config.ini si renseignée, sinon variable d'environnement, sinon défaut.
+def _val(section, key, env, defaut=None):
+    if _ini.has_option(section, key) and _ini.get(section, key).strip():
+        return _ini.get(section, key).strip()
+    return os.getenv(env, defaut)
+
+
 class Settings:
-    # Email
+    # --- Poste utilisateur : config.ini (prioritaire) puis variables d'environnement ---
+
+    # Base de l'application (PostgreSQL, sur le serveur).
+    database_url = _val("database", "url", "DATABASE_URL")
+
+    # Nextcloud WebDAV (dépôt + listing des dossiers).
+    nextcloud_url = _val("nextcloud", "url", "NEXTCLOUD_URL",
+                         "https://nextcloud.numericite.fr/remote.php/webdav")
+    nextcloud_user = _val("nextcloud", "user", "NEXTCLOUD_USER")
+    nextcloud_password = _val("nextcloud", "password", "NEXTCLOUD_PASSWORD")
+    base_remote_path = _val("nextcloud", "base_remote_path", "BASE_REMOTE_PATH", "2 - Projets")
+
+    # Ricobot (missions + bons de commande).
+    ricobot_url = _val("ricobot", "url", "RICOBOT_URL")
+    ricobot_token = _val("ricobot", "token", "RICOBOT_API")
+    ricobot_bo_url = _val("ricobot", "bo_url", "RICOBOT_BO_URL",
+                          "https://preprod.ricobot.numericite.eu")
+
+    # --- Serveur / pipeline : via .env uniquement (non utilisé par l'UI compilée) ---
+
+    # Email (Exchange).
     email_address = os.getenv("EMAIL_ADRESS")
-    email_password =os.getenv("EMAIL_PASSWORD")
-    exchange_server =os.getenv("EXCHANGE_SERVER")
-    #Email d'exportation
+    email_password = os.getenv("EMAIL_PASSWORD")
+    exchange_server = os.getenv("EXCHANGE_SERVER")
     exchange_email = os.getenv("EMAIL_ADRESS")
 
-    # Nextcloud WebDAV
-    nextcloud_url = "https://nextcloud.numericite.fr/remote.php/webdav"
-    nextcloud_user = os.getenv("NEXTCLOUD_USER")
-    nextcloud_password = os.getenv("NEXTCLOUD_PASSWORD")   
-    base_remote_path = "2 - Projets"   # dossier racine de classement
-    
-    # Chemins
-    inbox_temp = Path("data/inbox_temp")
-    logs_dir = Path("logs")
+    # Chemins de travail du pipeline.
+    inbox_temp = BASE_DIR / "data" / "inbox_temp"
+    logs_dir = BASE_DIR / "logs"
 
-    # Base de données de l'application (données de l'app : mails, documents, statuts).
-    # SQLite en local aujourd'hui.
-    #  pour passer à PostgreSQL plus tard, il suffit de définir DATABASE_URL (ex: postgresql+psycopg://user:pwd@host/db) — aucun autre
-
-    database_url = os.getenv("DATABASE_URL")
-
-    # Modèles Ollama
-    #vision_model = "qwen2.5vl:3b" #pour analyse des images
-    #vision_model = "moondream" #analyse image leger mais trop faible 
-    vision_model = "granite3.2-vision:2b" #
-    classification_model = "llama3.2:3b" #analyse texte ( faible au nombresue données)
-    #extraction_model = "qwen3:4b" #plus rapide mais moins fiable sur les cas nuances
-    extraction_model = "qwen2.5:7b" #extraction structuree (type, client, projet)
-    
-
-    #Claude API
+    # LLM Claude.
     claude_api_key = os.getenv("CLAUDE_API_KEY")
     claude_model = "claude-haiku-4-5"
 
-    #notion
+    # Notion (legacy).
     notion_token = os.getenv("NOTION_TOKEN")
     notion_database_id = os.getenv("NOTION_DATABASE_ID")
 
-    #ricobot
-    ricobot_url = os.getenv("RICOBOT_URL")
-    ricobot_token = os.getenv("RICOBOT_API")
-    # URL du back-office Ricobot, pour les liens cliquables vers un BDC créé
-    # (ex. {base}/bo/missions/141/orders/205).
-    
-    ricobot_bo_url = os.getenv("RICOBOT_BO_URL", "https://preprod.ricobot.numericite.eu")
+    # Modèles Ollama (legacy vision).
+    vision_model = "granite3.2-vision:2b"
+    classification_model = "llama3.2:3b"
+    extraction_model = "qwen2.5:7b"
 
-    
-    #Analyse des document
+    # Analyse des documents.
     min_text_chars = 50
 
 

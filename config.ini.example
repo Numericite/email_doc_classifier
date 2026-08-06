@@ -1,0 +1,19 @@
+# Configuration de DocumentAssistant.
+# Copiez ce fichier en « config.ini » À CÔTÉ de DocumentAssistant.exe,
+# renseignez les valeurs, puis relancez l'application (aucune recompilation).
+
+[database]
+# Base PostgreSQL de l'application (sur le serveur).
+# Remplacez SERVEUR par l'adresse IP ou le nom d'hôte du serveur.
+url = postgresql://classifier:MOT_DE_PASSE@SERVEUR:5432/classifier
+
+[nextcloud]
+url = https://nextcloud.numericite.fr/remote.php/webdav
+user =
+password =
+base_remote_path = 2 - Projets
+
+[ricobot]
+url =
+token =
+bo_url = https://preprod.ricobot.numericite.eu

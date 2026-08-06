@@ -23,7 +23,7 @@ from ricobot.lister_projet_ricot import lister_projets
 from ricobot.remplissage_bdc import remplir_bdc
 
 
-# Les statuts, dans l'ordre du menu déroulant : (clé interne, libellé affiché).
+# Statuts, dans l'ordre du menu : (clé interne, libellé affiché).
 STATUTS = [
     ("en_attente", "En attente"),
     ("a_signer", "À signer"),
@@ -31,7 +31,7 @@ STATUTS = [
     ("classe", "Classé"),
 ]
 
-# Couleur du menu de statut selon sa valeur : (fond, texte).
+# Couleur du menu de statut : (fond, texte).
 COULEURS_STATUT = {
     "classe":     ("#E6F7EC", "#1B9E52"),  # vert
     "en_attente": ("#FFF4E5", "#E08600"),  # orange
@@ -40,29 +40,26 @@ COULEURS_STATUT = {
 }
 
 
-#  thème (pipé de l'app interne) 
+# Palette du thème.
 BLEU = "#2F6BFF"
 TEXTE = "#1B2559"
 MUET = "#8A94A6"
 BORDURE = "#E6E9F0"
 FOND = "#F5F6F8"
 
-# Feuille de style globale 
+# Feuille de style globale (Qt Style Sheet).
 STYLE = f"""
 QWidget {{ background: {FOND}; color: {TEXTE}; font-size: 14px; }}
 QScrollArea {{ border: none; }}
 
 #titre {{ font-size: 24px; font-weight: bold; color: {TEXTE}; }}
 
-/* Boîte de recherche : cadre arrondi blanc contenant la loupe + le champ. */
 #boiteRecherche {{
     background: white;
     border: 1px solid {BORDURE};
     border-radius: 10px;
 }}
 
-/* Carte d'un mail : blanche sur fond gris + liseré bleu à gauche, pour que
-   chaque mail se détache nettement du suivant. */
 #carteMail {{
     background: white;
     border: 1px solid {BORDURE};
@@ -81,8 +78,6 @@ QScrollArea {{ border: none; }}
     font-weight: bold;
 }}
 
-/* Carte d'un document : gris léger, pour se détacher du blanc de la carte mail
-   dans laquelle elle est imbriquée. */
 #carteDoc {{
     background: {FOND};
     border: 1px solid {BORDURE};
@@ -91,7 +86,6 @@ QScrollArea {{ border: none; }}
 #nomFichier {{ font-size: 15px; font-weight: bold; color: {TEXTE}; }}
 #projet {{ font-size: 14px; font-weight: bold; color: {BLEU}; }}
 
-/* Pastilles (type, score) */
 QLabel[pastille="true"] {{
     border-radius: 10px;
     padding: 3px 10px;
@@ -99,7 +93,6 @@ QLabel[pastille="true"] {{
     font-weight: bold;
 }}
 
-/* Boutons */
 QPushButton {{
     background: #EEF2FB;
     color: {BLEU};
@@ -112,7 +105,6 @@ QPushButton:hover {{ background: #E1E9Fb; }}
 QPushButton#primaire {{ background: {BLEU}; color: white; }}
 QPushButton#primaire:hover {{ background: #2559d8; }}
 
-/* Menu déroulant du statut */
 QComboBox {{
     background: white;
     border: 1px solid {BORDURE};
@@ -155,10 +147,7 @@ def _pastille_type(type_doc):
     return p
 
 
-# QComboBox qui n'attrape JAMAIS la molette : la page défile normalement au-dessus,
-# et le menu ne change plus de valeur au scroll (même s'il a le focus).
-# La valeur se change au clic / dans la liste déroulante. Le défilement à
-# l'intérieur de la liste ouverte n'est pas affecté (c'est un autre widget).
+# Combo qui ignore la molette : évite de changer sa valeur en scrollant la page.
 class ComboSansScroll(QComboBox):
     def wheelEvent(self, event):
         event.ignore()
@@ -172,37 +161,33 @@ class FenetrePrincipale(QMainWindow):
         self.resize(1000, 720)
         self.setStyleSheet(STYLE)
 
-        # Missions Ricobot : chargées une fois, pour le sélecteur des bons de
-        # commande (permet à l'utilisateur de corriger le projet si le LLM se trompe).
+        # Missions Ricobot, chargées une fois (sélecteur des bons de commande).
         try:
             self.projets_ricobot = lister_projets()
         except Exception as e:
             print(f"[!] Missions Ricobot indisponibles : {e}")
             self.projets_ricobot = []
 
-        # Tous les dossiers Nextcloud (< 1 an), chargés une fois : permettent de
-        # rechercher/choisir la destination même si l'IA n'a pas proposé le bon dossier.
+        # Dossiers Nextcloud, chargés une fois (champ recherchable de destination).
         try:
             self.dossiers_nextcloud = lister_dossiers(settings.base_remote_path)
         except Exception as e:
             print(f"[!] Dossiers Nextcloud indisponibles : {e}")
             self.dossiers_nextcloud = []
-        # Index nom -> chemin, pour retrouver le dossier choisi dans le champ recherchable.
+        # Index nom -> chemin, pour retrouver le dossier choisi.
         self._dossiers_par_nom = {d["nom"]: d["chemin"] for d in self.dossiers_nextcloud}
 
-        # Nom du dossier créé par mail (mail_id -> nom) : mémorisé pour que les
-        # documents suivants d'un même mail réutilisent le même dossier sans
-        # avoir à retaper le nom après un rafraîchissement.
+        # Dossier créé par mail (mail_id -> nom) : réutilisé par les documents suivants.
         self._dossier_mail = {}
 
-        # Filtre par statut (None = tous). Piloté par la barre de filtre.
+        # État du filtre par statut (None = tous).
         self._filtre_statut = None
         self._boutons_filtre = {}
 
-        # Texte de la barre de recherche (vide = pas de filtre texte).
+        # Texte de la recherche (vide = aucun filtre texte).
         self._recherche = ""
 
-        # En-tête : titre + bouton rafraîchir.
+        # En-tête : titre + rafraîchir.
         entete = QWidget()
         h = QHBoxLayout(entete)
         h.setContentsMargins(24, 20, 24, 8)
@@ -214,7 +199,7 @@ class FenetrePrincipale(QMainWindow):
         h.addStretch()
         h.addWidget(refresh)
 
-        # Zone défilable contenant la liste des mails.
+        # Zone défilable qui contient les mails.
         zone = QScrollArea()
         zone.setWidgetResizable(True)
         self.conteneur = QWidget()
@@ -224,13 +209,13 @@ class FenetrePrincipale(QMainWindow):
         self.liste.setAlignment(Qt.AlignTop)
         zone.setWidget(self.conteneur)
 
-        # Ligne unique : boîte de recherche (loupe + champ) à gauche, puis les filtres.
+        # Ligne unique : recherche (loupe + champ) à gauche, puis les filtres.
         barre = QWidget()
         bf = QHBoxLayout(barre)
         bf.setContentsMargins(24, 0, 24, 8)
         bf.setSpacing(10)
 
-        # Boîte de recherche arrondie : loupe (Segoe MDL2 Assets) + champ sans bordure.
+        # Boîte de recherche : loupe (Segoe MDL2 Assets) + champ sans bordure.
         loupe = QLabel(chr(0xE721))   # U+E721 = loupe
         loupe.setStyleSheet(
             f"font-family:'Segoe MDL2 Assets'; color:{MUET}; font-size:14px;")
@@ -250,7 +235,7 @@ class FenetrePrincipale(QMainWindow):
         hb.addWidget(recherche)
         bf.addWidget(boite)
 
-        # Filtres par statut, juste après la recherche.
+        # Filtres par statut.
         etiquette = QLabel("Filtrer :")
         etiquette.setStyleSheet(f"color:{MUET};")
         bf.addWidget(etiquette)
@@ -269,10 +254,10 @@ class FenetrePrincipale(QMainWindow):
         v.addWidget(zone)
         self.setCentralWidget(centre)
 
-        # Affiche tout au démarrage (et marque le bouton "Tous" comme actif).
+        # Affiche tout au démarrage ("Tous" actif).
         self._appliquer_filtre(None)
 
-    # Vide et reconstruit la liste depuis la base (repository.lister_mails).
+    # Vide et reconstruit la liste depuis la base.
     def rafraichir(self):
         while self.liste.count():
             item = self.liste.takeAt(0)
@@ -297,7 +282,7 @@ class FenetrePrincipale(QMainWindow):
         for mail in mails:
             self.liste.addWidget(self._carte_mail(mail))
 
-    # Applique un filtre par statut (None = tous) et met la barre à jour.
+    # Applique un filtre par statut et met la barre à jour.
     def _appliquer_filtre(self, statut):
         self._filtre_statut = statut
         for cle, bouton in self._boutons_filtre.items():
@@ -305,13 +290,12 @@ class FenetrePrincipale(QMainWindow):
             bouton.setStyleSheet(f"background:{BLEU}; color:white;" if actif else "")
         self.rafraichir()
 
-    # Barre de recherche : mémorise le texte saisi et rafraîchit la liste.
+    # Recherche : mémorise le texte et rafraîchit.
     def _rechercher(self, texte):
         self._recherche = texte.strip().lower()
         self.rafraichir()
 
-    # True si le texte recherché apparaît dans un champ du mail ou de ses documents
-    # (expéditeur, objet, nom de fichier, nom de projet). Recherche insensible à la casse.
+    # True si le texte cherché apparaît dans un champ du mail ou de ses documents.
     def _mail_correspond(self, mail):
         q = self._recherche
         champs = [mail.get("expediteur"), mail.get("expediteur_nom"), mail.get("objet")]
@@ -320,9 +304,7 @@ class FenetrePrincipale(QMainWindow):
             champs.append(d.get("projet_nom"))
         return any(q in (c or "").lower() for c in champs)
 
-    # Corbeille : supprime un mail et ses documents (après confirmation).
-    # Les fichiers déjà déposés dans Nextcloud ne sont pas touchés ; on nettoie
-    # seulement les copies locales encore présentes.
+    # Corbeille : supprime un mail et ses documents (les fichiers Nextcloud sont conservés).
     def _supprimer_mail(self, mail):
         nb = len(mail["documents"])
         rep = QMessageBox.question(
@@ -332,7 +314,7 @@ class FenetrePrincipale(QMainWindow):
         if rep != QMessageBox.StandardButton.Yes:
             return
 
-        for d in mail["documents"]:
+        for d in mail["documents"]:                 # nettoie les copies locales restantes
             chemin = d.get("chemin_local")
             if chemin and Path(chemin).exists():
                 try:
@@ -343,11 +325,11 @@ class FenetrePrincipale(QMainWindow):
         supprimer_mail(mail["id"])
         self.rafraichir()
 
-    # Une carte par mail : en-tête (expéditeur + email + objet) puis ses documents.
+    # Une carte par mail : en-tête (expéditeur + objet + date + corbeille) puis ses documents.
     def _carte_mail(self, mail):
         carte = QFrame()
         carte.setObjectName("carteMail")
-        # Ombre portée -> chaque mail se détache nettement des autres.
+        # Ombre portée : détache chaque mail du suivant.
         ombre = QGraphicsDropShadowEffect()
         ombre.setBlurRadius(18)
         ombre.setXOffset(0)
@@ -359,7 +341,7 @@ class FenetrePrincipale(QMainWindow):
         col.setContentsMargins(18, 16, 18, 16)
         col.setSpacing(12)
 
-        # En-tête horizontal : [avatar] [expéditeur]  [objet — date]  [poubelle].
+        # En-tête : [avatar] [expéditeur] [objet — date] [corbeille].
         entete = QHBoxLayout()
         entete.setSpacing(12)
         entete.addWidget(self._avatar(mail), alignment=Qt.AlignTop)
@@ -383,7 +365,7 @@ class FenetrePrincipale(QMainWindow):
             bloc.addWidget(principal)
         entete.addLayout(bloc)
 
-        # Objet + date de réception (date en gras), à côté de l'expéditeur.
+        # Objet + date (en gras).
         sujet = html.escape(mail.get("objet") or "(sans objet)")
         d = self._format_date(mail.get("date_mail"))
         objet = QLabel(f"{sujet} — <b>{html.escape(d)}</b>" if d else sujet)
@@ -393,8 +375,8 @@ class FenetrePrincipale(QMainWindow):
         entete.addSpacing(20)
         entete.addWidget(objet, stretch=1)
 
-        poubelle = QPushButton("x")
-          # croix rouge = supprimer (ASCII, toujours rendu)
+        # Corbeille rouge (X) à droite.
+        poubelle = QPushButton("X")
         poubelle.setToolTip("Supprimer ce mail et ses documents de la liste")
         poubelle.setFixedSize(34, 34)
         poubelle.setStyleSheet(
@@ -405,15 +387,13 @@ class FenetrePrincipale(QMainWindow):
 
         col.addLayout(entete)
 
-        # Ligne de séparation entre l'en-tête et les documents.
+        # Séparateur en-tête / documents.
         sep = QFrame()
         sep.setFixedHeight(1)
         sep.setStyleSheet(f"background:{BORDURE}; border:none;")
         col.addWidget(sep)
 
-        # Un mail = un projet = un dossier : UNE SEULE destination pour tout le mail.
-        # On agrège les dossiers candidats trouvés pour n'importe quel document.
-        # S'il y en a -> menu de choix. Sinon -> case de création (repli).
+        # Un mail = un dossier : on agrège les dossiers candidats de tous ses documents.
         candidats_mail, vus = [], set()
         for d in mail["documents"]:
             for c in (d.get("dossiers_candidats") or []):
@@ -424,9 +404,8 @@ class FenetrePrincipale(QMainWindow):
         ligne = QHBoxLayout()
         ligne.addWidget(QLabel("Dossier du mail :"))
 
-        # Champ recherchable : liste de TOUS les dossiers Nextcloud extraits, avec la
-        # proposition de l'IA pré-sélectionnée. L'utilisateur peut taper pour chercher
-        # un autre dossier existant, ou saisir un nouveau nom (créé au moment du dépôt).
+        # Champ recherchable : tous les dossiers Nextcloud, proposition IA pré-sélectionnée,
+        # ou saisie d'un nouveau nom (créé au dépôt).
         dest_combo = ComboSansScroll()
         dest_combo.setEditable(True)
         dest_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -435,11 +414,10 @@ class FenetrePrincipale(QMainWindow):
         completer = dest_combo.completer()
         if completer is not None:
             completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
-            completer.setFilterMode(Qt.MatchContains)   # cherche "contient", pas "commence par"
+            completer.setFilterMode(Qt.MatchContains)   # recherche "contient"
         dest_combo.setMinimumWidth(360)
 
-        # Valeur par défaut : proposition IA (1er candidat), sinon dossier déjà créé
-        # pour ce mail, sinon vide.
+        # Valeur par défaut : proposition IA, sinon dossier déjà créé pour ce mail.
         if candidats_mail:
             idx = dest_combo.findData(candidats_mail[0]["chemin"])
             if idx >= 0:
@@ -452,8 +430,7 @@ class FenetrePrincipale(QMainWindow):
 
         ligne.addWidget(dest_combo, stretch=1)
 
-        # Score de rattachement du dossier, juste à droite du champ (meilleur score
-        # parmi les documents du mail — un mail = un projet).
+        # Meilleur score parmi les documents du mail.
         scores = [d.get("score_confiance") for d in mail["documents"]
                   if d.get("score_confiance") is not None]
         ligne.addWidget(_pastille_score(max(scores) if scores else None))
@@ -465,8 +442,7 @@ class FenetrePrincipale(QMainWindow):
                 doc, mail.get("objet") or "", mail.get("date_mail"), destination))
         return carte
 
-    # Retrouve le nom du dossier déjà créé pour un mail, à partir d'un document
-    # déjà classé (son chemin Nextcloud est en base). Persiste après redémarrage.
+    # Nom du dossier déjà créé pour un mail (retrouvé via le chemin Nextcloud d'un doc classé).
     def _dossier_cree_du_mail(self, mail):
         for d in mail["documents"]:
             chemin = d.get("chemin_nextcloud")
@@ -475,7 +451,7 @@ class FenetrePrincipale(QMainWindow):
                 return dossier.rsplit("/", 1)[-1]        # dernier segment = nom du dossier
         return ""
 
-    # Petit avatar rond avec l'initiale de l'expéditeur (aide à distinguer les mails).
+    # Avatar rond avec l'initiale de l'expéditeur.
     def _avatar(self, mail):
         source = (mail.get("expediteur_nom") or mail.get("expediteur") or "?").strip()
         a = QLabel(source[0].upper() if source else "?")
@@ -484,8 +460,7 @@ class FenetrePrincipale(QMainWindow):
         a.setAlignment(Qt.AlignCenter)
         return a
 
-    # Une carte bordurée par document : nom, score, statut, actions.
-    # La destination Nextcloud est commune au mail (cf. _carte_mail).
+    # Une carte par document : nom + type, bloc BDC éventuel, statut et actions.
     def _carte_document(self, doc, objet_mail="", date_mail=None, destination=None):
         carte = QFrame()
         carte.setObjectName("carteDoc")
@@ -493,8 +468,7 @@ class FenetrePrincipale(QMainWindow):
         col.setContentsMargins(16, 12, 16, 12)
         col.setSpacing(10)
 
-        # Ligne 1 : nom du fichier + type de document juste à sa droite.
-        # (Le score est affiché au niveau du mail, à côté du dossier.)
+        # Ligne 1 : nom du fichier + type.
         l1 = QHBoxLayout()
         nom = QLabel(doc["nom_fichier"])
         nom.setObjectName("nomFichier")
@@ -503,13 +477,12 @@ class FenetrePrincipale(QMainWindow):
         l1.addStretch()
         col.addLayout(l1)
 
-        # Bloc BON DE COMMANDE : projet Ricobot (corrigeable) + champs extraits.
-        # Affiché uniquement pour les bons de commande.
+        # Bloc bon de commande (uniquement pour ce type).
         champs_bdc = None
         if doc.get("type_document") == "bon_de_commande":
             champs_bdc = self._bloc_bdc(col, doc.get("bdc_ricobot") or {}, date_mail, doc)
 
-        # Ligne 3 : statut (select) + boutons + bouton Classé (= dépôt Nextcloud).
+        # Ligne d'actions : statut + Aperçu / Télécharger / (Remplir BDC) / Classer.
         l3 = QHBoxLayout()
 
         combo = ComboSansScroll()
@@ -545,44 +518,42 @@ class FenetrePrincipale(QMainWindow):
 
         return carte
 
-    # Bloc d'un bon de commande : sélecteur de mission Ricobot (largeur réduite,
-    # modifiable) + un crayon ✏️ à droite pour éditer titre / dates.
-    # Les valeurs éditées sont stockées dans un dict relu par « Remplir BDC ».
+    # Bloc bon de commande : sélecteur de mission Ricobot + crayon d'édition + lien du BDC.
     def _bloc_bdc(self, col, bdc, date_mail, doc):
         ligne = QHBoxLayout()
         ligne.addWidget(QLabel("🧾 Projet Ricobot :"))
         combo_mission = ComboSansScroll()
         for p in self.projets_ricobot:
             combo_mission.addItem(f"{p['nom']} — {p['company']}", userData=p["id"])
-        # Pré-sélection : 1re mission proposée par le LLM, si elle existe.
+        # Pré-sélection : 1re mission proposée par le LLM.
         proposes = bdc.get("mission_ids") or []
         if proposes:
             idx = combo_mission.findData(proposes[0])
             if idx >= 0:
                 combo_mission.setCurrentIndex(idx)
-        combo_mission.setMaximumWidth(460)          # largeur du menu Ricobot
+        combo_mission.setMaximumWidth(460)
         ligne.addWidget(combo_mission)
 
         # Valeurs éditables du BDC (date de début = réception du mail par défaut).
         valeurs = {
             "titre": bdc.get("abbreviation") or "",
-            "reference": bdc.get("reference") or "",   # non édité, gardé pour l'API
+            "reference": bdc.get("reference") or "",
             "date_debut": bdc.get("date_debut") or (str(date_mail)[:10] if date_mail else ""),
             "date_fin": bdc.get("end_date") or "",
             "mission_ids": bdc.get("mission_ids") or [],
             "missions": bdc.get("missions") or [],
             "confidence": bdc.get("confidence"),
-            "order_id": bdc.get("order_id"),        # BDC créé dans Ricobot
-            "order_url": bdc.get("order_url"),      # lien cliquable vers ce BDC
+            "order_id": bdc.get("order_id"),      # BDC créé dans Ricobot
+            "order_url": bdc.get("order_url"),    # lien vers ce BDC
         }
 
         b_edit = QPushButton("✏️")
         b_edit.setToolTip("Voir / modifier les informations du bon de commande")
         b_edit.clicked.connect(lambda _=0, d=doc, v=valeurs: self._editer_bdc(d, v))
-        ligne.addWidget(b_edit)          # collé au menu
-        ligne.addStretch()               # le reste de la largeur pousse à droite
+        ligne.addWidget(b_edit)
+        ligne.addStretch()
 
-        # Lien cliquable vers le BDC créé dans Ricobot (présent une fois « Remplir BDC » fait).
+        # Lien cliquable vers le BDC créé (présent une fois « Remplir BDC » fait).
         url_bdc = bdc.get("order_url")
         if url_bdc:
             lien = QLabel(f'<a href="{url_bdc}">Voir le BDC dans Ricobot ↗</a>')
@@ -594,8 +565,7 @@ class FenetrePrincipale(QMainWindow):
 
         return {"combo_mission": combo_mission, "valeurs": valeurs}
 
-    # Crayon ✏️ : fenêtre d'édition du BDC. « Valider » enregistre en base
-    # (l'envoi à Ricobot reste au bouton « Remplir BDC »).
+    # Crayon : fenêtre d'édition du BDC ; « Valider » enregistre en base (sans envoi Ricobot).
     def _editer_bdc(self, doc, valeurs):
         dlg = QDialog(self)
         dlg.setWindowTitle("Bon de commande")
@@ -623,7 +593,7 @@ class FenetrePrincipale(QMainWindow):
         if not dlg.exec():
             return
 
-        # Applique en mémoire (relu par Remplir BDC) puis enregistre en base.
+        # Applique en mémoire puis enregistre en base.
         valeurs["titre"] = e_titre.text().strip()
         valeurs["date_debut"] = e_debut.text().strip()
         valeurs["date_fin"] = e_fin.text().strip()
@@ -639,8 +609,7 @@ class FenetrePrincipale(QMainWindow):
             "order_url": valeurs.get("order_url"),
         })
 
-    # Bouton « Remplir BDC » : envoie le bon de commande à Ricobot pour la mission
-    # retenue (celle du LLM ou celle choisie par l'utilisateur).
+    # « Remplir BDC » : crée le bon de commande dans Ricobot et enregistre son lien.
     def _remplir_bdc(self, doc, champs):
         mission_id = champs["combo_mission"].currentData()
         if mission_id is None:
@@ -659,7 +628,7 @@ class FenetrePrincipale(QMainWindow):
             lien = (f"{settings.ricobot_bo_url.rstrip('/')}"
                     f"/bo/missions/{mission_id}/orders/{cree_id}")
 
-            # Persiste le lien dans le BDC pour qu'il reste affiché après rafraîchissement.
+            # Persiste le lien pour qu'il reste affiché après rafraîchissement.
             maj_bdc_ricobot(doc["id"], {
                 "mission_ids": v["mission_ids"], "missions": v["missions"],
                 "abbreviation": v["titre"], "reference": v["reference"],
@@ -677,20 +646,18 @@ class FenetrePrincipale(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Erreur Ricobot", f"{type(e).__name__}: {e}")
 
-    # Applique au select la couleur correspondant au statut.
+    # Colore le select selon le statut courant.
     def _appliquer_couleur_statut(self, combo, statut):
         bg, fg = COULEURS_STATUT.get(statut, ("white", TEXTE))
         combo.setStyleSheet(f"QComboBox {{ background:{bg}; color:{fg}; }}")
 
-    # Le menu déroulant a changé -> on enregistre le nouveau statut dans la base.
+    # Changement de statut → enregistre en base et recolore.
     def _statut_change(self, doc, combo):
         statut = combo.currentData()
         changer_statut(doc["id"], statut)
         self._appliquer_couleur_statut(combo, statut)
-    
 
-    # Bouton "Classé" : dépose le document dans le dossier choisi (le crée si besoin),
-    # puis enregistre le classement en base (statut="classe" + chemin distant).
+    # « Classer » : dépose le document dans le dossier choisi (créé si besoin) puis statut=classé.
     def _classer(self, doc, destination):
         chemin_local = doc.get("chemin_local")
         if not chemin_local or not Path(chemin_local).exists():
@@ -704,20 +671,18 @@ class FenetrePrincipale(QMainWindow):
             return
 
         try:
-            # Le texte correspond-il à un dossier Nextcloud existant (par son nom) ?
+            # Dossier existant (par son nom) ou nouveau dossier à créer.
             chemin_existant = self._dossiers_par_nom.get(texte)
             if chemin_existant:
-                dossier = chemin_existant                     # dossier existant choisi
+                dossier = chemin_existant
             else:
-                dossier = creer_dossier(settings.base_remote_path, texte)  # nouveau dossier
+                dossier = creer_dossier(settings.base_remote_path, texte)
                 self._dossier_mail[doc["mail_id"]] = texte
 
             chemin_distant = deposer_document(chemin_local, dossier)
             changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
 
-            # Le fichier est maintenant sur Nextcloud (source de vérité) : on
-            # supprime la copie locale. Aperçu/Télécharger le reprendront depuis
-            # Nextcloud via chemin_nextcloud. L'échec de suppression n'est pas bloquant.
+            # Le fichier est sur Nextcloud : on supprime la copie locale (échec non bloquant).
             try:
                 Path(chemin_local).unlink()
             except OSError as e:
@@ -727,9 +692,8 @@ class FenetrePrincipale(QMainWindow):
             self.rafraichir()
         except Exception as e:
             QMessageBox.critical(self, "Erreur de dépôt", f"{type(e).__name__}: {e}")
-        
 
-    # Formate la date de réception du mail (ISO -> "JJ/MM/AAAA HH:MM").
+    # Formate la date de réception (ISO -> "JJ/MM/AAAA HH:MM").
     def _format_date(self, iso):
         if not iso:
             return ""
@@ -739,8 +703,7 @@ class FenetrePrincipale(QMainWindow):
         except Exception:
             return str(iso)[:16].replace("T", " ")
 
-    # Renvoie un chemin local ouvrable : la copie locale si elle existe, sinon le
-    # fichier téléchargé depuis Nextcloud (dans un dossier temporaire).
+    # Chemin ouvrable : la copie locale, sinon le fichier téléchargé depuis Nextcloud.
     def _fichier_ouvrable(self, doc):
         chemin = doc.get("chemin_local")
         if chemin and Path(chemin).exists():
@@ -752,7 +715,7 @@ class FenetrePrincipale(QMainWindow):
             return cible
         return None
 
-    # Aperçu : ouvre le fichier (local, ou récupéré depuis Nextcloud si supprimé).
+    # Aperçu : ouvre le fichier avec l'application par défaut du système.
     def _apercu(self, doc):
         try:
             fichier = self._fichier_ouvrable(doc)
@@ -764,7 +727,7 @@ class FenetrePrincipale(QMainWindow):
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(fichier.resolve())))
 
-    # ⬇ Télécharger : enregistre le fichier (local, ou récupéré depuis Nextcloud).
+    # Télécharger : enregistre une copie du fichier.
     def _telecharger(self, doc):
         cible, _ = QFileDialog.getSaveFileName(self, "Enregistrer sous", doc["nom_fichier"])
         if not cible:
@@ -782,9 +745,18 @@ class FenetrePrincipale(QMainWindow):
 
 
 def main():
-    init_db()
     app = QApplication(sys.argv)
     app.setFont(QFont("Segoe UI", 10))
+    # Base injoignable → message clair (config.ini) au lieu d'un crash silencieux.
+    try:
+        init_db()
+    except Exception as e:
+        QMessageBox.critical(
+            None, "Connexion à la base",
+            "Impossible de se connecter à la base de données.\n"
+            "Vérifiez la section [database] de config.ini.\n\n"
+            f"{type(e).__name__}: {e}")
+        sys.exit(1)
     fenetre = FenetrePrincipale()
     fenetre.show()
     sys.exit(app.exec())
