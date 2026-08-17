@@ -1,6 +1,8 @@
-# Dépendances de l'application 
+# Dépendances de l'application
 anthropic==0.116.0         # analyse des documents (API Claude)
-docling==2.107.0           # extraction du texte (PDF / DOCX + OCR RapidOCR)
+docling==2.107.0           # extraction du texte (PDF / DOCX )
+rapidocr==3.9.0            # moteur OCR utilisé par Docling (PDF scannés / images)
+onnxruntime==1.27.0        # runtime requis par RapidOCR
 exchangelib==5.6.0         # surveillance de la boîte mail Exchange
 psycopg[binary]==3.3.4     # PostgreSQL — driver SQL direct ; [binary] = wheel précompilé
 PySide6==6.11.1            # interface de bureau (Qt)
