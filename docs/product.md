@@ -2,12 +2,14 @@
 
 ## Présentation
 
-Application locale destinée au pôle administratif pour **assister** le traitement et le
-classement des documents reçus par e-mail.
+Application destinée au pôle administratif pour **assister** le traitement et le classement
+des documents reçus par e-mail.
 
-L'application ne classe **jamais** automatiquement. Chaque proposition est validée par un
-utilisateur avant tout dépôt dans Nextcloud. L'objectif : automatiser le travail répétitif
-tout en gardant un contrôle humain sur chaque décision.
+Elle se compose d'un **pipeline** qui analyse les mails sur un serveur, et d'une **application
+de bureau** installée sur les postes pour valider les propositions. L'application ne classe
+**jamais** automatiquement : chaque proposition est validée par un utilisateur avant tout
+dépôt dans Nextcloud. L'objectif : automatiser le travail répétitif tout en gardant un
+contrôle humain sur chaque décision.
 
 ---
 
@@ -92,13 +94,23 @@ recherche · filtre par statut · suppression d'un mail.
 
 ---
 
+## Déploiement
+
+- Le **pipeline** et la **base PostgreSQL** tournent sur un **serveur** de l'entreprise (Docker).
+- L'**application de bureau** est distribuée aux postes sous forme d'**exécutable Windows**,
+  accompagné d'un fichier de configuration (adresse du serveur, identifiants) modifiable sans
+  recompiler.
+- Les postes se connectent à la base du serveur sur le **réseau interne**.
+
+---
+
 ## Hors périmètre
 
 - Classement automatique sans validation.
 - Base vectorielle / RAG.
 - LLM Vision.
-- Multi-utilisateur.
-- Déploiement cloud.
+- Gestion de comptes / droits par utilisateur.
+- Déploiement cloud (le serveur est interne à l'entreprise).
 
 ---
 

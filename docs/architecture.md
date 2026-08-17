@@ -2,144 +2,88 @@
 
 ## Objet du document
 
-Décrit l'architecture technique de l'assistant de gestion documentaire défini dans
-[`product.md`](./product.md) : le rôle de chaque module, le flux de traitement, les
-technologies et les principes.
-
-```
-src/document_assisstant/
-├── config/          configuration (.env)
-├── emails/          boîte mail Exchange + pièces jointes
-├── extraction/      extraction du texte (Docling)
-├── nextcloud/       dossiers Nextcloud : lister / déposer / créer / télécharger
-├── ricobot/         missions + bons de commande
-├── classification/  prompts + appels au LLM
-├── databases/       PostgreSQL (schéma + accès, psycopg)
-├── orchestration/   le pipeline (chef d'orchestre)
-├── ui/              interface de bureau (PySide6)
-└── utils/           fonctions transverses
-```
-
-> **Legacy (non utilisé)** : `notion/`, `vision/`, `classification/classifier.py`,
-> `orchestration/pipeline.py`. La version actuelle rattache les documents à des **dossiers
-> Nextcloud** (et non à des projets Notion).
+Décrit l'architecture de l'assistant défini dans [`product.md`](./product.md) : comment le
+système est organisé (client / serveur), le flux de traitement, le déploiement et les principes.
 
 ---
 
-## 1. Vue d'ensemble
+## 1. Vue d'ensemble : client / serveur
 
-L'application est un **assistant local**. Elle surveille une boîte mail, analyse les documents
-reçus, et **propose** un classement dans Nextcloud (et un rattachement Ricobot pour les bons
-de commande). **Aucun classement automatique** : chaque proposition est validée par un humain.
+Le système se répartit en deux parties :
 
-Elle se décompose en deux temps :
+- **Serveur** (Docker) : le **pipeline** d'analyse + la base **PostgreSQL**. Tourne en continu
+  sur un serveur de l'entreprise.
+- **Postes utilisateurs** : l'**interface de bureau**, distribuée en **exécutable Windows**.
+  Elle se connecte à la base du serveur sur le réseau interne.
 
-- **Le pipeline** (`orchestration/`) : automatique. Il lit les mails, analyse, et enregistre
-  une proposition en base. Il n'écrit rien dans Nextcloud/Ricobot.
-- **L'interface** (`ui/`) : humaine. Elle lit la base, l'utilisateur valide/corrige, et c'est
-  seulement là que le dépôt réel a lieu.
+```
+  SERVEUR (Docker)                          POSTES UTILISATEURS
+  ┌────────────────────────┐                ┌──────────────────────┐
+  │  pipeline ──► Postgres  │◄──── LAN ──────┤  application (.exe)   │
+  │             (base app)  │                │  + config.ini        │
+  └────────────────────────┘                └──────────────────────┘
+```
 
-Les modules ont une **responsabilité unique** et communiquent par des données simples
-(chemins, texte, dictionnaires).
+Le traitement se fait en **deux temps** :
+
+- **Le pipeline** : automatique. Il lit les mails, analyse les documents et enregistre une
+  **proposition** en base. Il n'écrit **rien** dans Nextcloud/Ricobot.
+- **L'interface** : humaine. Elle lit la base, l'utilisateur valide/corrige, et c'est
+  **seulement là** que le dépôt réel a lieu.
+
+La base PostgreSQL est le **point de rencontre** : le pipeline écrit, l'interface lit.
 
 ---
 
-## 2. Rôle de chaque module
+## 2. Le pipeline (côté serveur)
 
-### `config/`
-Configuration centralisée : charge le `.env` (identifiants Exchange, Nextcloud, Ricobot, clé
-Anthropic, `DATABASE_URL`), chemins de travail et seuils. Aucun secret codé en dur ailleurs.
+Chef d'orchestre sans logique métier : il enchaîne les étapes et fait circuler les données.
 
-### `emails/`
-Connexion **Exchange** et point d'entrée du flux. Filtre les nouveaux e-mails porteurs de
-pièces jointes, sauvegarde les fichiers dans le dossier temporaire, et restitue les
-métadonnées (expéditeur, sujet, date, `message_id`) + la liste des fichiers.
+```
+Exchange ─► extraction (Docling + OCR) ─► dossiers Nextcloud existants
+        ─► analyse LLM (Claude) ─► enregistrement PostgreSQL
+```
 
-### `extraction/`
-Extraction de contenu locale, unifiée autour de **Docling** (PDF texte et scanné, images,
-DOCX, tableaux) avec **RapidOCR** comme moteur OCR interne. Produit un **texte unique**
-(Markdown) plafonné. Aucun document brut n'est transmis au LLM.
-
-### `nextcloud/`
-Intégration **Nextcloud** (WebDAV) : lister les dossiers existants (candidats de classement),
-déposer un document, créer un dossier, télécharger un fichier. N'écrit qu'après validation.
-
-### `ricobot/`
-Intégration **Ricobot** : lister les missions, créer un bon de commande. Utilisé uniquement
-pour les documents de type bon de commande.
-
-### `classification/`
-Orchestration de l'**analyse par le LLM** (`classifier_v2`). Construit le prompt (objet du
-mail + texte extrait + liste des dossiers), fait **un seul appel** Claude et récupère une
-sortie **structurée en JSON** : type, dossier(s) proposé(s), score. Pour un bon de commande,
-un second appel trouve la mission Ricobot et extrait les champs du BDC.
-
-### `databases/`
-Données de l'application dans **PostgreSQL**, en **SQL direct via psycopg** (sans ORM). Tout le
-SQL est isolé dans `repository.py` (**repository pattern**) : le pipeline et l'UI n'appellent
-que des fonctions.
-
-### `orchestration/`
-**Uniquement orchestrateur** (`pipeline_v2.py`) : enchaîne les étapes dans le bon ordre et fait
-circuler les données, **sans logique métier**. Gère les erreurs (un document en échec est sauté).
-
-### `ui/`
-Interface de bureau (**PySide6**). Lit la base (`lister_mails`), affiche les propositions, et
-déclenche les actions (dépôt Nextcloud, remplissage BDC Ricobot, changement de statut). Ne
-connaît que les fonctions du `repository` — jamais de SQL.
-
-### `utils/`
-Fonctions transverses (sérialisation des dates, helpers), sans dépendance métier.
+- **Un seul appel LLM par document** (deux pour un bon de commande).
+- **Aucun document brut n'est envoyé au LLM** : seul le texte extrait (localement), plafonné.
+- La sortie du LLM est un **JSON structuré** : type de document, dossier(s) proposé(s), score
+  de confiance — plus, pour un bon de commande, la mission Ricobot et les champs du BDC.
+- Il tourne **périodiquement** (planifié sur le serveur).
 
 ---
 
-## 3. Flux complet
+## 3. L'interface (côté poste)
 
-```
-[1] emails/        Exchange → mails avec pièce jointe → fichiers dans data/inbox_temp/
-[2] extraction/    Docling → texte
-[3] nextcloud/     liste des dossiers existants
-[4] classification/ Claude → type + dossier(s) + score (+ mission Ricobot si BDC)
-[5] databases/     enregistrement en PostgreSQL
-        │
-        ▼
-    ui/            l'humain valide → dépôt Nextcloud / création BDC Ricobot
-```
+Application de bureau (**PySide6**), organisée **par e-mail reçu**. Elle lit les propositions
+en base, l'utilisateur valide ou corrige, puis déclenche les actions réelles :
 
-Un seul appel LLM par document (deux pour un bon de commande).
+- **dépôt** du document dans le dossier Nextcloud choisi (créé à la volée si besoin) ;
+- **création** du bon de commande dans Ricobot ;
+- **changement de statut**.
+
+L'interface ne connaît que les fonctions d'accès aux données (**repository**) : elle ne
+manipule jamais de SQL directement.
 
 ---
 
-## 4. Interactions entre modules
-
-Dépendances **orientées** (sens unique), pour limiter le couplage :
+## 4. Flux complet
 
 ```
-config/  ← lu par tous les modules
-utils/   ← utilitaires transverses
-
-           ┌──────── orchestration/ (pipeline) ────────┐
-           ▼                                            ▼
-emails/ ─► extraction/ ─► classification/ ─► databases/ ◄─► ui/ ─► nextcloud/ + ricobot/
-                              ▲                                (au moment de la validation)
-                     nextcloud/ (liste) + ricobot/ (missions)
+[serveur]  Exchange → extraction → dossiers Nextcloud → LLM → PostgreSQL
+                                                              │
+[poste]                                    l'humain valide ──┘→ dépôt Nextcloud / BDC Ricobot
 ```
-
-- `config/` et `utils/` : dépendances de bas niveau.
-- `orchestration/` connaît tout le flux ; il appelle les autres et ne porte pas de logique métier.
-- `databases/` est le point de passage entre le pipeline (écriture) et l'UI (lecture + statuts).
-- `nextcloud/` et `ricobot/` n'écrivent **jamais** sans une action explicite de l'UI (validation).
 
 ---
 
-## 5. Technologies
+## 5. Déploiement
 
-- **Python**, configuration par `.env` (`config/`).
-- **Exchange** (mail), **Nextcloud** WebDAV (dépôt), **Ricobot** (bons de commande).
-- **Docling** (extraction) + **RapidOCR** (OCR).
-- **API Anthropic (Claude)** — analyse structurée, sortie JSON.
-- **PostgreSQL** + **psycopg** (SQL direct). En développement, PostgreSQL tourne dans **Docker**.
-- **PySide6** (Qt) pour l'interface.
+- **Serveur** : `docker compose` lance **PostgreSQL** + le **pipeline**. Les secrets
+  (identifiants Exchange, Nextcloud, Ricobot, clé Claude, mot de passe base) vivent dans un
+  fichier d'environnement **hors dépôt**.
+- **Postes** : un **exécutable** + un fichier **`config.ini`** posé à côté, contenant l'adresse
+  du serveur et les identifiants. Il est **modifiable sans recompiler** l'application.
+- La base est la **source de vérité partagée** ; les postes s'y connectent en **réseau interne**.
 
 ---
 
@@ -147,20 +91,35 @@ emails/ ─► extraction/ ─► classification/ ─► databases/ ◄─► ui
 
 Deux tables, relation un-à-plusieurs (`ON DELETE CASCADE`) :
 
-- **`mails`** : `message_id` (unique, anti-doublon), `expediteur`, `expediteur_nom`, `objet`,
-  `date_mail`, `date_analyse`.
-- **`documents`** : `mail_id`, `nom_fichier`, `chemin_local`, `type_document`,
-  `dossiers_candidats` (JSON), `bdc_ricobot` (JSON, bons de commande), `score_confiance`,
-  `statut`, `chemin_nextcloud`, `date_decision`.
+- **`mails`** : expéditeur, objet, date, `message_id` (unique, anti-doublon).
+- **`documents`** : rattaché à un mail — nom, type, dossier(s) candidat(s) (JSON), infos du bon
+  de commande (JSON), score, **statut**, emplacement Nextcloud final.
+
+Tout le SQL est isolé dans un module d'accès unique (**repository pattern**), ce qui rend la
+base remplaçable sans toucher au reste (le passage SQLite → PostgreSQL s'est fait ainsi).
 
 ---
 
-## 7. Principes d'architecture
+## 7. Technologies
 
-- **Responsabilité unique** par module ; couplage faible, dépendances orientées.
-- **Validation humaine obligatoire** : aucun dépôt sans action explicite dans l'UI.
-- **Traitement local** : extraction et OCR en local ; seul le texte extrait est transmis au LLM.
-- **Un seul appel LLM par document** (deux pour un BDC) ; texte plafonné pour maîtriser le coût.
-- **Repository pattern** : tout le SQL isolé dans `databases/` → base remplaçable sans toucher
-  au reste (SQLite → PostgreSQL a été fait ainsi).
+- **Python** — pipeline et interface.
+- **Exchange** (mail), **Nextcloud** WebDAV (dépôt des documents), **Ricobot** (bons de commande).
+- **Docling** + **RapidOCR** — extraction et OCR, en local.
+- **API Anthropic (Claude)** — analyse à sortie JSON structurée.
+- **PostgreSQL** + **psycopg** (SQL direct) — données de l'application, dans **Docker**.
+- **PySide6** (Qt) — interface de bureau, distribuée en **exécutable Windows** (PyInstaller).
+
+---
+
+## 8. Principes d'architecture
+
+- **Séparation client / serveur** : le pipeline et la base tournent côté serveur ; l'interface
+  côté poste. La base est le seul lien.
+- **Validation humaine obligatoire** : aucun dépôt sans action explicite dans l'interface.
+- **Traitement local** : extraction et OCR en local ; seul le texte est transmis au LLM.
+- **Coût maîtrisé** : un appel LLM par document, texte plafonné.
+- **Repository pattern** : tout le SQL isolé → base remplaçable.
 - **PostgreSQL = source de vérité** ; les fichiers durables vivent dans **Nextcloud**.
+
+> **Legacy (non utilisé)** : le rattachement à des projets Notion et l'analyse par LLM Vision
+> ont été remplacés. La version actuelle rattache les documents à des **dossiers Nextcloud**.
