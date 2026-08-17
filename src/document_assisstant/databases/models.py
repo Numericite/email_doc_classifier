@@ -26,7 +26,8 @@ SCHEMA_SQL = (
         mail_id          INTEGER NOT NULL REFERENCES mails(id) ON DELETE CASCADE,
 
         nom_fichier      VARCHAR(512) NOT NULL,
-        chemin_local     TEXT,                       -- aperçu + téléchargement
+        chemin_local     TEXT,                       -- chemin sur la machine du pipeline
+        contenu          BYTEA,                      -- octets du fichier (aperçu/dl avant classement)
 
         -- Résultat de l'analyse LLM (proposition figée au moment de l'analyse)
         type_document    VARCHAR(64),
@@ -55,6 +56,7 @@ SCHEMA_SQL = (
     # Ajout de la colonne sur une base déjà créée (idempotent).
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS dossiers_candidats JSONB;",
     "ALTER TABLE documents ADD COLUMN IF NOT EXISTS bdc_ricobot JSONB;",
+    "ALTER TABLE documents ADD COLUMN IF NOT EXISTS contenu BYTEA;",
     # On ne stocke plus le texte extrait (volumineux, jamais relu).
     "ALTER TABLE documents DROP COLUMN IF EXISTS texte_extrait;",
 

@@ -19,7 +19,7 @@ class EmailClient:
     
 
     
-    def filter(self, hours=30):
+    def filter(self, hours=24):
       account = self.connect()
       extractor = AttachmentExtractor()          # ajout
       limite = EWSDateTime.now(tz=account.default_timezone) - timedelta(hours=hours)

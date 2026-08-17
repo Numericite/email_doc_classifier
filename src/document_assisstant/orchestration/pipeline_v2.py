@@ -1,5 +1,6 @@
 import sys
-sys.stdout.reconfigure(encoding='utf-8')
+if sys.stdout is not None:
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from pathlib import Path
 
@@ -76,6 +77,7 @@ def executer_pipeline(hours=2):
                 analyses.append({
                     "nom_fichier": fichier.name,
                     "chemin_local": chemin,
+                    "contenu": fichier.read_bytes(),         # octets stockés en base
                     "type_document": res["type_document"],
                     "score_confiance": res["score_confiance"],
                     "dossiers_candidats": res["dossiers"],   # liste {nom, chemin}

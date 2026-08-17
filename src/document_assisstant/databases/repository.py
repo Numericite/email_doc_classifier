@@ -57,13 +57,13 @@ def enregistrer_mail_et_documents(email, analyses):
             cur.execute(
                 """
                 INSERT INTO documents (
-                    mail_id, nom_fichier, chemin_local, type_document,
+                    mail_id, nom_fichier, chemin_local, contenu, type_document,
                     projet_nom, projet_client, projet_nextcloud, score_confiance,
                     dossiers_candidats, bdc_ricobot
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (mail_id, a["nom_fichier"], a.get("chemin_local"),
+                (mail_id, a["nom_fichier"], a.get("chemin_local"), a.get("contenu"),
                  a.get("type_document"), projet.get("projet_name"), projet.get("client"),
                  projet.get("nextcloud"), a.get("score_confiance"),
                  Jsonb(a.get("dossiers_candidats") or []),
@@ -85,10 +85,19 @@ def lister_mails(statut=None):
         if not mails:
             return []
 
+        # Toutes les colonnes sauf `contenu` : les octets des fichiers sont lourds et
+        # inutiles pour la liste ; on les lit à la demande (Aperçu/Télécharger) via lire_contenu.
+        colonnes = (
+            "id, mail_id, nom_fichier, chemin_local, type_document, "
+            "projet_nom, projet_client, projet_nextcloud, score_confiance, "
+            "dossiers_candidats, bdc_ricobot, statut, sous_dossier, "
+            "chemin_nextcloud, date_decision"
+        )
         if statut:
-            cur.execute("SELECT * FROM documents WHERE statut = %s ORDER BY id", (statut,))
+            cur.execute(f"SELECT {colonnes} FROM documents WHERE statut = %s ORDER BY id",
+                        (statut,))
         else:
-            cur.execute("SELECT * FROM documents ORDER BY id")
+            cur.execute(f"SELECT {colonnes} FROM documents ORDER BY id")
         documents = cur.fetchall()
 
     # Regroupe les documents sous leur mail.
@@ -139,4 +148,19 @@ def maj_bdc_ricobot(document_id, bdc):
             "UPDATE documents SET bdc_ricobot = %s WHERE id = %s",
             (Jsonb(bdc), document_id),
         )
+        conn.commit()
+
+
+# Renvoie les octets d'un document (aperçu/téléchargement avant classement), ou None.
+def lire_contenu(document_id):
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute("SELECT contenu FROM documents WHERE id = %s", (document_id,))
+        row = cur.fetchone()
+        return bytes(row[0]) if row and row[0] is not None else None
+
+
+# Libère les octets une fois le fichier déposé dans Nextcloud (base allégée).
+def vider_contenu(document_id):
+    with _connexion() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE documents SET contenu = NULL WHERE id = %s", (document_id,))
         conn.commit()

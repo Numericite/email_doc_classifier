@@ -16,8 +16,9 @@ from PySide6.QtCore import QUrl, Qt
 from config.settings import settings
 from databases.repository import (
     init_db, lister_mails, changer_statut, maj_bdc_ricobot, supprimer_mail,
+    lire_contenu, vider_contenu,
 )
-from nextcloud.depot import deposer_document, creer_dossier, telecharger_document
+from nextcloud.depot import deposer_bytes, creer_dossier, telecharger_document
 from nextcloud.lister_dossiers import lister_dossiers
 from ricobot.lister_projet_ricot import lister_projets
 from ricobot.remplissage_bdc import remplir_bdc
@@ -313,16 +314,7 @@ class FenetrePrincipale(QMainWindow):
             "(Les fichiers déjà déposés dans Nextcloud ne sont pas supprimés.)")
         if rep != QMessageBox.StandardButton.Yes:
             return
-
-        for d in mail["documents"]:                 # nettoie les copies locales restantes
-            chemin = d.get("chemin_local")
-            if chemin and Path(chemin).exists():
-                try:
-                    Path(chemin).unlink()
-                except OSError as e:
-                    print(f"[!] Copie locale non supprimée ({chemin}) : {e}")
-
-        supprimer_mail(mail["id"])
+        supprimer_mail(mail["id"])          # supprime mail + documents + octets (CASCADE)
         self.rafraichir()
 
     # Une carte par mail : en-tête (expéditeur + objet + date + corbeille) puis ses documents.
@@ -659,9 +651,10 @@ class FenetrePrincipale(QMainWindow):
 
     # « Classer » : dépose le document dans le dossier choisi (créé si besoin) puis statut=classé.
     def _classer(self, doc, destination):
-        chemin_local = doc.get("chemin_local")
-        if not chemin_local or not Path(chemin_local).exists():
-            QMessageBox.warning(self, "Classé", "Fichier introuvable sur le disque.")
+        # Octets du fichier, récupérés depuis la base.
+        contenu = lire_contenu(doc["id"])
+        if not contenu:
+            QMessageBox.warning(self, "Classé", "Fichier introuvable.")
             return
 
         combo = (destination or {}).get("combo")
@@ -679,14 +672,9 @@ class FenetrePrincipale(QMainWindow):
                 dossier = creer_dossier(settings.base_remote_path, texte)
                 self._dossier_mail[doc["mail_id"]] = texte
 
-            chemin_distant = deposer_document(chemin_local, dossier)
+            chemin_distant = deposer_bytes(contenu, doc["nom_fichier"], dossier)
             changer_statut(doc["id"], "classe", chemin_nextcloud=chemin_distant)
-
-            # Le fichier est sur Nextcloud : on supprime la copie locale (échec non bloquant).
-            try:
-                Path(chemin_local).unlink()
-            except OSError as e:
-                print(f"[!] Copie locale non supprimée ({chemin_local}) : {e}")
+            vider_contenu(doc["id"])        # fichier durable dans Nextcloud → libère la base
 
             QMessageBox.information(self, "Classé", f"Document déposé dans :\n{dossier}")
             self.rafraichir()
@@ -703,15 +691,17 @@ class FenetrePrincipale(QMainWindow):
         except Exception:
             return str(iso)[:16].replace("T", " ")
 
-    # Chemin ouvrable : la copie locale, sinon le fichier téléchargé depuis Nextcloud.
+    # Chemin ouvrable : depuis Nextcloud si classé, sinon depuis les octets en base.
     def _fichier_ouvrable(self, doc):
-        chemin = doc.get("chemin_local")
-        if chemin and Path(chemin).exists():
-            return Path(chemin)
         distant = doc.get("chemin_nextcloud")
-        if distant:
+        if distant:                                      # document classé → depuis Nextcloud
             cible = Path(tempfile.gettempdir()) / doc["nom_fichier"]
             cible.write_bytes(telecharger_document(distant))
+            return cible
+        contenu = lire_contenu(doc["id"])                # pas encore classé → octets en base
+        if contenu:
+            cible = Path(tempfile.gettempdir()) / doc["nom_fichier"]
+            cible.write_bytes(contenu)
             return cible
         return None
 

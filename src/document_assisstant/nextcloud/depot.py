@@ -38,6 +38,15 @@ def deposer_document(chemin_local, dossier_cible):
     return chemin_distant
 
 
+# Dépose des octets (en mémoire) dans un dossier Nextcloud. Utilisé par l'UI, qui
+# récupère le fichier depuis la base et n'a pas de copie sur le disque.
+def deposer_bytes(contenu, nom_fichier, dossier_cible):
+    chemin_distant = f"{dossier_cible.strip('/')}/{nom_fichier}"
+    response = requests.put(_url(chemin_distant), data=contenu, auth=_auth())
+    response.raise_for_status()
+    return chemin_distant
+
+
 # Récupère (download) le contenu d'un fichier Nextcloud. `chemin_distant` : chemin
 # relatif renvoyé par deposer_document. Sert à l'aperçu / téléchargement quand la
 # copie locale a été supprimée. Renvoie les octets du fichier.
