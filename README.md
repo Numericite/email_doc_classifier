@@ -26,6 +26,24 @@ Pré-requis : Docker + Docker Compose. Copier à la racine `.env.docker` et `doc
 Pour lancer le serveur (PostgreSQL + pipeline)
 
 ```bash
+docker compose up -d --build
+```
+
+Pour relancer le pipeline (il tourne une fois puis s'arrête)
+
+```bash
+docker compose run --rm assistant
+```
+
+Pour planifier le pipeline toutes les heures (cron)
+
+```bash
+0 * * * * cd /chemin/classifier && docker compose run --rm assistant
+```
+
+Pour mettre à jour le serveur après un changement de code
+
+```bash
 git pull
 docker compose up -d --build
 ```
@@ -48,6 +66,22 @@ Pour vider la base (tests)
 ```bash
 docker compose exec postgres psql -U postgres -d classifier -c "TRUNCATE mails, documents RESTART IDENTITY CASCADE;"
 ```
+
+> ⚠️ Ne **jamais** faire `docker compose down -v` (supprime le volume = perte des données).
+> Le port `5432` doit rester ouvert **uniquement sur le LAN**.
+
+---
+
+## Postes utilisateurs — l'application (.exe)
+
+Pour générer l'exécutable
+
+```powershell
+src\document_assisstant\.venv\Scripts\pyinstaller.exe DocumentAssistant.spec --noconfirm
+```
+
+On livre **2 fichiers** de `dist\` : `DocumentAssistant.exe` + `config.ini` (côte à côte).
+Dans `config.ini`, pointer vers l'**IP du serveur** (pas `localhost`) :
 
 ```ini
 [database]
