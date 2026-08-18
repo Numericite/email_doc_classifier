@@ -26,24 +26,6 @@ Pré-requis : Docker + Docker Compose. Copier à la racine `.env.docker` et `doc
 Pour lancer le serveur (PostgreSQL + pipeline)
 
 ```bash
-docker compose up -d --build
-```
-
-Pour relancer le pipeline (il tourne une fois puis s'arrête)
-
-```bash
-docker compose run --rm assistant
-```
-
-Pour planifier le pipeline toutes les heures (cron)
-
-```bash
-0 * * * * cd /chemin/classifier && docker compose run --rm assistant
-```
-
-Pour mettre à jour le serveur après un changement de code
-
-```bash
 git pull
 docker compose up -d --build
 ```
@@ -65,20 +47,8 @@ Pour vider la base (tests)
 
 ```bash
 docker compose exec postgres psql -U postgres -d classifier -c "TRUNCATE mails, documents RESTART IDENTITY CASCADE;"
-```
-
-> ⚠️ Ne **jamais** faire `docker compose down -v` (supprime le volume = perte des données).
-> Le port `5432` doit rester ouvert **uniquement sur le LAN**.
-
+```.
 ---
-
-## Postes utilisateurs — l'application (.exe)
-
-Pour générer l'exécutable
-
-```powershell
-src\document_assisstant\.venv\Scripts\pyinstaller.exe DocumentAssistant.spec --noconfirm
-```
 
 On livre **2 fichiers** de `dist\` : `DocumentAssistant.exe` + `config.ini` (côte à côte).
 Dans `config.ini`, pointer vers l'**IP du serveur** (pas `localhost`) :
@@ -99,27 +69,6 @@ token =
 > Changer de serveur = éditer `config.ini`, **sans recompiler**.
 
 ---
-
-## Développement (local)
-
-Pour lancer le pipeline
-
-```powershell
-cd C:\Dev\email_doc_classifier_git
-$env:PYTHONPATH="src\document_assisstant"
-src\document_assisstant\.venv\Scripts\python.exe -m orchestration.pipeline_v2
-```
-
-Pour lancer l'interface
-
-```powershell
-src\document_assisstant\.venv\Scripts\python.exe -m ui.app
-```
-
-> En local, l'UI lit `.env` (`DATABASE_URL` sur `localhost`).
-
----
-
 ## Configuration
 
 Trois fichiers selon le contexte (`config.ini` prioritaire, sinon `.env`). Aucun secret dans le code.
@@ -140,10 +89,10 @@ Nextcloud (`NEXTCLOUD_USER`, `NEXTCLOUD_PASSWORD`), Ricobot (`RICOBOT_URL`, `RIC
 
 | Module | Rôle |
 |---|---|
-| `config/` | Configuration (`config.ini` / `.env`) |
+| `config/` | Configuration (`.env`) |
 | `emails/` | Connexion Exchange, pièces jointes |
 | `extraction/` | Extraction du texte (**Docling** + OCR **RapidOCR**) |
-| `nextcloud/` | Lister / déposer / créer / télécharger |
+| `nextcloud/` | Lister / déposer  |
 | `ricobot/` | Missions · bons de commande |
 | `classification/` | Prompts + appels **Claude** (`classifier_v2`) |
 | `databases/` | Schéma SQL + accès (**psycopg**, sans ORM) |
