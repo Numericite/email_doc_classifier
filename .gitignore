@@ -5,7 +5,6 @@ build/
 dist/
 *.spec.bak
 .venv/
-docs/
 data/
 __pycache__/
 architecture.txt
