@@ -19,7 +19,7 @@ class EmailClient:
     
 
     
-    def filter(self, hours=30):
+    def filter(self, hours=24):
       account = self.connect()
       extractor = AttachmentExtractor()          # ajout
       limite = EWSDateTime.now(tz=account.default_timezone) - timedelta(hours=hours)
@@ -40,6 +40,7 @@ class EmailClient:
         if attachments:
             saved_files = extractor.extract(item)      # ajout : sauvegarde disque
             emails.append({
+                "message_id": item.message_id,   # ajout : identifiant unique (anti-doublon base)
                 "date": serialize(item.datetime_received),
                 "sujet": item.subject,
                 "sender": item.sender.email_address,

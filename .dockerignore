@@ -1,0 +1,9 @@
+src/document_assisstant/.venv/
+
+__pycache__/
+*.py[cod]
+
+.gitignore
+
+.vscode
+.claude

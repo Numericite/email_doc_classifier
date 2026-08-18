@@ -1,6 +1,11 @@
 .env
+.env.docker
+config.ini
+build/
+dist/
+*.spec.bak
 .venv/
-data/inbox_temp/
+data/
 __pycache__/
 architecture.txt
 .claude/
