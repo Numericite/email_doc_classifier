@@ -8,7 +8,7 @@ rattachement à une mission **Ricobot**.
 > l'humain *valide*. Elle automatise le travail répétitif (lire, comprendre, ranger le bon
 > document au bon endroit) tout en gardant le contrôle sur chaque décision.
 
-📄 Voir aussi : [`docs/product.md`](docs/product.md) · [`docs/architecture.md`](docs/architecture.md) · [`docs/tasks.md`](docs/tasks.md).
+📄 Voir aussi : [`docs/product.md`](docs/product.md) · [`docs/architecture.md`](docs/architecture.md) ·
 
 ---
 
